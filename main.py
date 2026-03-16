@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import flet as ft
 import os
 import sys
