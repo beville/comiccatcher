@@ -1,0 +1,240 @@
+        
+        # 2. Inject current feed items into sparse buffer
+        start_idx = self.buffer_absolute_offset
+        items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
+        for i, item in enumerate(items):
+            self.sparse_buffer[start_idx + i] = item
+            
+        # 3. Trigger initial render
+        self._sync_continuous_view()
+        asyncio.create_task(self._update_continuous_data())
+
+    def _sync_continuous_view(self):
+        """Synchronously update visible widgets based on current scroll position."""
+        if not self.total_items: return
+        
+        # 1. Calculate visible range
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        item_h = 275 if self.is_pub_mode else 45
+        cols = self._last_cols
+        
+        start_row = scroll_y // item_h
+        end_row = (scroll_y + viewport_h) // item_h
+        
+        # Buffer of 1 row above/below
+        start_row = max(0, start_row - 1)
+        end_row = min(math.ceil(self.total_items / cols), end_row + 1)
+        
+        visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+        
+        # 2. Update status text
+        current_idx = start_row * cols
+        # Estimate items per screen for the label
+        est_items = ((viewport_h // item_h) + 1) * cols
+        self.status_label.setText(f"Showing {current_idx+1}-{min(self.total_items, current_idx + est_items)} of {self.total_items}")
+
+        # 3. Handle widget lifecycle
+        self._render_visible_range(visible_indices, item_h, cols)
+
+    async def _update_continuous_data(self):
+        if not self.total_items or self._is_updating_continuous: return
+        self._is_updating_continuous = True
+        
+        try:
+            tried_pages = set()
+            while True:
+                # Calculate visible range again
+                viewport_h = self.scroll.viewport().height()
+                scroll_y = self.scroll.verticalScrollBar().value()
+                item_h = 275 if self.is_pub_mode else 45
+                cols = self._last_cols
+                start_row = max(0, (scroll_y // item_h) - 1)
+                end_row = min(math.ceil(self.total_items / cols), (scroll_y + viewport_h) // item_h + 1)
+                visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+                
+                missing = [i for i in visible_indices if i not in self.sparse_buffer]
+                if not missing:
+                    break
+                    
+                per_page = 100
+                if hasattr(self, '_last_feed_metadata'):
+                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+                
+                target_idx = missing[0]
+                target_page = (target_idx // per_page) + (self._server_index_base or 0)
+                
+                if target_page in tried_pages:
+                    break
+                tried_pages.add(target_page)
+                
+                success = await self._fetch_missing_indices(missing)
+                # Sync UI immediately after fetch
+                self._sync_continuous_view()
+                
+                if not success:
+                    break
+        finally:
+            self._is_updating_continuous = False
+            
+            # Buffer of 1 row above/below
+            start_row = max(0, start_row - 1)
+            end_row = min(math.ceil(self.total_items / cols), end_row + 1)
+            
+            visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+            
+            tried_pages = set()
+            
+            # 2. Loop to fetch all required pages for the visible range
+            while True:
+                missing = [i for i in visible_indices if i not in self.sparse_buffer]
+                
+                # Render current state (placeholders or data)
+                self._render_visible_range(visible_indices, item_h, cols)
+                
+                if not missing:
+                    break
+                    
+                # Identify which page we need
+                per_page = 100
+                if hasattr(self, '_last_feed_metadata'):
+                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+                
+                target_idx = missing[0]
+                target_page = (target_idx // per_page) + (self._server_index_base or 0)
+                
+                if target_page in tried_pages:
+                    logger.debug(f"Continuous | Already tried page {target_page}, stopping loop.")
+                    break
+                
+                tried_pages.add(target_page)
+                
+                # Fetch the next missing page
+                success = await self._fetch_missing_indices(missing)
+                if not success:
+                    break # Avoid infinite loop on errors
+        finally:
+            self._is_updating_continuous = False
+
+    def _render_visible_range(self, visible_indices, item_h, cols):
+        # Update Status
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        start_row = scroll_y // item_h
+        current_idx = start_row * cols
+        self.status_label.setText(f"Showing {current_idx+1}-{min(self.total_items, current_idx + self.items_per_screen)} of {self.total_items}")
+
+        # Remove widgets no longer visible
+        to_remove = set(self._rendered_widgets.keys()) - visible_indices
+        for idx in to_remove:
+            w = self._rendered_widgets.pop(idx)
+            w.hide()
+            w.deleteLater()
+            
+        # Add or update visible ones
+        for idx in visible_indices:
+            has_data = idx in self.sparse_buffer
+            existing_widget = self._rendered_widgets.get(idx)
+            
+            # If we have a placeholder but now have data, replace it
+            if existing_widget and getattr(existing_widget, 'is_placeholder', False) and has_data:
+                existing_widget.hide()
+                existing_widget.deleteLater()
+                del self._rendered_widgets[idx]
+                existing_widget = None
+
+            if not existing_widget:
+                if has_data:
+                    item_data = self.sparse_buffer[idx]
+                    widget = self._create_continuous_widget(item_data)
+                else:
+                    widget = self._create_placeholder_widget()
+                
+                widget.setParent(self.content_container)
+                row = idx // cols
+                col = idx % cols
+                x = col * 175 if self.is_pub_mode else 0
+                y = row * item_h
+                widget.move(x, y)
+                widget.show()
+                self._rendered_widgets[idx] = widget
+
+    def _create_placeholder_widget(self):
+        w = QFrame()
+        w.is_placeholder = True
+        if self.is_pub_mode:
+            w.setFixedSize(160, 260)
+            w.setStyleSheet("background-color: #1a1a1a; border-radius: 5px; border: 1px dashed #333;")
+            layout = QVBoxLayout(w)
+            lbl = QLabel("...")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: #444;")
+            layout.addWidget(lbl)
+        else:
+            w.setFixedSize(self.content_container.width() - 20, 40)
+            w.setStyleSheet("background-color: #1a1a1a; border-radius: 4px; border: 1px dashed #333;")
+        return w
+
+    def _create_continuous_widget(self, item):
+        if isinstance(item, Publication):
+            card = PublicationCard(item, self.api_client.profile.get_base_url(), self.image_manager)
+            card.clicked.connect(self.on_open_detail_callback)
+            return card
+        else:
+            # Navigation
+            btn = QPushButton(item.title)
+            btn.setFixedSize(self.content_container.width() - 20, 40)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet("text-align: left; padding: 10px; background-color: #2d2d2d; color: white; border: 1px solid #3e3e42; border-radius: 4px;")
+            u = urljoin(self.api_client.profile.get_base_url(), item.href)
+            btn.clicked.connect(lambda _, url=u, t=item.title: self.on_navigate(url, t))
+            return btn
+
+    async def _fetch_missing_indices(self, missing_indices):
+        if self.is_loading_more: return False
+        
+        # 1. Group missing indices into server pages
+        per_page = 100 # Default
+        if hasattr(self, '_last_feed_metadata'):
+            per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+            
+        # Target the first missing index's page
+        target_idx = missing_indices[0]
+        target_page = (target_idx // per_page) + (self._server_index_base or 0)
+        
+        # 2. Predict URL
+        url = self._predict_page_url(target_page)
+        if not url:
+            return False
+
+        self.is_loading_more = True
+        self.progress.setVisible(True)
+        try:
+            feed = await self.opds_client.get_feed(url)
+            self._update_after_fetch(feed, url, reset_offset=False)
+            
+            # Map fetched items to their global indices
+            page_start_idx = (target_page - (self._server_index_base or 0)) * per_page
+            new_items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
+            
+            if not new_items:
+                return False
+
+            for i, item in enumerate(new_items):
+                self.sparse_buffer[page_start_idx + i] = item
+            
+            return True
+                
+        except Exception as e:
+            logger.error(f"Continuous mode fetch error: {e}")
+            return False
+        finally:
+            self.is_loading_more = False
+            self.progress.setVisible(False)
+
+    def _predict_page_url(self, page_num):
+        """Predict the URL for a specific page number based on common patterns."""
+        # Use next_url or last_url as a template if available, they are more likely to have params
+        template_url = self.next_url or self.last_url or self._last_loaded_url
+        if not template_url: return None
+        

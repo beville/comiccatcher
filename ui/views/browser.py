@@ -8,9 +8,9 @@ from urllib.parse import urljoin
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QScrollArea, QFrame, QGridLayout, QLineEdit, QProgressBar, QGroupBox, QMenu
+    QScrollArea, QFrame, QGridLayout, QLineEdit, QProgressBar, QGroupBox, QMenu, QComboBox
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
 from PyQt6.QtGui import QPixmap, QIcon, QKeyEvent, QWheelEvent
 
 from config import ConfigManager
@@ -40,10 +40,17 @@ class PublicationCard(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        self.cover_label = QLabel()
+        self.cover_label = QLabel(pub.metadata.title)
         self.cover_label.setFixedSize(150, 200)
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setStyleSheet("background-color: #111; border-radius: 3px;")
+        self.cover_label.setWordWrap(True)
+        self.cover_label.setStyleSheet("""
+            background-color: #111; 
+            border-radius: 3px; 
+            color: #555; 
+            font-size: 11px; 
+            padding: 10px;
+        """)
         self.cover_label.setScaledContents(True)
         layout.addWidget(self.cover_label)
 
@@ -71,6 +78,13 @@ class PublicationCard(QFrame):
 
     async def _load_thumb(self, url: str):
         asset_path = await self.image_manager.get_image_asset_path(url)
+        
+        # Check if the widget still exists before continuing
+        try:
+            if not self.cover_label: return
+        except RuntimeError:
+            return
+
         if asset_path:
             from config import CACHE_DIR
             import hashlib
@@ -79,7 +93,11 @@ class PublicationCard(QFrame):
             if full_path.exists():
                 pixmap = QPixmap(str(full_path))
                 if not pixmap.isNull():
-                    self.cover_label.setPixmap(pixmap)
+                    try:
+                        self.cover_label.setText("") # Clear the title fallback
+                        self.cover_label.setPixmap(pixmap)
+                    except RuntimeError:
+                        pass # Widget was deleted while we were processing the pixmap
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.pub, self.self_url)
@@ -215,11 +233,21 @@ class BrowserView(QWidget):
         self.last_url = None
         self.is_loading_more = False
         
-        # Viewport State
-        self.viewport_offset = 0
+        # ReFit State
+        self.refit_offset = 0
         self.items_per_screen = 10
-        self.total_viewport_pages = 1
+        self.total_refit_pages = 1
         self.is_pub_mode = False
+        self._server_index_base = None
+
+        # Continuous Mode state
+        self.sparse_buffer = {} # global_index -> item
+        self._scroll_debounce = QTimer()
+        self._scroll_debounce.setSingleShot(True)
+        self._scroll_debounce.setInterval(300)
+        self._scroll_debounce.timeout.connect(self._on_scroll_settled)
+        self._rendered_widgets = {} # global_index -> QWidget
+        self._is_updating_continuous = False
 
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -241,8 +269,25 @@ class BrowserView(QWidget):
         self.btn_facets.setMenu(self.facet_menu)
         self.btn_facets.setVisible(False)
         
+        self.paging_mode_combo = QComboBox()
+        self.paging_mode_combo.addItems(["ReFit Mode", "Continuous Mode", "Traditional"])
+        self.paging_mode_combo.setStyleSheet("""
+            QComboBox { background-color: #3e3e42; color: white; border: 1px solid #454545; border-radius: 3px; padding: 2px 5px; }
+            QComboBox::drop-down { border: none; }
+        """)
+        current_method = self.config_manager.get_scroll_method()
+        if current_method == "continuous":
+            self.paging_mode_combo.setCurrentText("Continuous Mode")
+        elif current_method == "paging":
+            self.paging_mode_combo.setCurrentText("Traditional")
+        else:
+            self.paging_mode_combo.setCurrentText("ReFit Mode")
+            
+        self.paging_mode_combo.currentTextChanged.connect(self._on_paging_mode_changed)
+        
         self.header.addWidget(self.status_label)
         self.header.addStretch()
+        self.header.addWidget(self.paging_mode_combo)
         self.header.addWidget(self.btn_facets)
         self.header.addWidget(self.search_input)
         self.layout.addWidget(self.header_widget)
@@ -257,6 +302,7 @@ class BrowserView(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_event)
         
         self.content_container = QWidget()
         self.content_layout = QVBoxLayout(self.content_container)
@@ -264,29 +310,81 @@ class BrowserView(QWidget):
         
         self.scroll.setWidget(self.content_container)
         
-        # Paging Bar (now at top)
+        # Paging Bar Container (to reserve space and prevent ReFit jumps)
+        self.paging_container = QFrame()
+        self.paging_container.setFixedHeight(45)
+        self.paging_container_layout = QVBoxLayout(self.paging_container)
+        self.paging_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.paging_container_layout.setSpacing(0)
+        
+        # Paging Bar
         self.paging_bar = PagingBar(self.on_navigate)
         self.paging_bar.setVisible(False)
         self.paging_bar.setStyleSheet("background-color: #252526; border-bottom: 1px solid #333;")
         
-        # Viewport Paging Bar (Alternative to standard paging)
-        self.viewport_paging_bar = PagingBar(self.on_navigate) # Reuse class structure, logic overridden in methods
-        self.viewport_paging_bar.setVisible(False)
-        self.viewport_paging_bar.setStyleSheet("background-color: #1e3a5f; border-bottom: 1px solid #333;")
+        # ReFit Paging Bar
+        self.refit_paging_bar = PagingBar(self.on_navigate)
+        self.refit_paging_bar.setVisible(False)
+        self.refit_paging_bar.setStyleSheet("background-color: #1e3a5f; border-bottom: 1px solid #333;")
+
+        self.paging_container_layout.addWidget(self.paging_bar)
+        self.paging_container_layout.addWidget(self.refit_paging_bar)
 
         self.layout.addWidget(self.header_widget)
-        self.layout.addWidget(self.paging_bar)
-        self.layout.addWidget(self.viewport_paging_bar)
-        self.layout.addWidget(self.progress)
+        self.layout.addWidget(self.paging_container)
         self.layout.addWidget(self.scroll, 1)
+
+        # Progress (Floating Overlay)
+        self.progress = QProgressBar(self)
+        self.progress.setFixedHeight(3)
+        self.progress.setTextVisible(False)
+        self.progress.setRange(0, 0)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                background: transparent;
+                border: none;
+            }
+            QProgressBar::chunk {
+                background-color: #3791ef;
+            }
+        """)
+        self.progress.setVisible(False)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Position progress bar at the top of the scroll area
+        y = self.header_widget.y() + self.header_widget.height()
+        if self.paging_container.isVisible():
+            y = max(y, self.paging_container.y() + self.paging_container.height())
+        self.progress.setGeometry(0, y, self.width(), 3)
+        
+        method = self.config_manager.get_scroll_method()
+        if method == "refit" and self.items_buffer:
+            # Re-render current offset with new capacity
+            self._render_refit_screen()
+        elif method == "continuous" and self.total_items:
+            # Recalculate layout for continuous mode
+            available_w = self.scroll.viewport().width() - 20
+            self._last_cols = max(1, available_w // 175) if self.is_pub_mode else 1
+            item_h = 275 if self.is_pub_mode else 45
+            
+            rows = math.ceil(self.total_items / self._last_cols) if self._last_cols > 0 else 0
+            total_h = rows * item_h
+            
+            self.content_container.setMinimumHeight(total_h)
+            self.content_container.setMaximumHeight(total_h)
+            self.content_container.setFixedWidth(self.scroll.viewport().width())
+            
+            # Reposition existing widgets and potentially load new ones
+            asyncio.create_task(self._update_continuous_view())
 
     def keyPressEvent(self, event: QKeyEvent):
         method = self.config_manager.get_scroll_method()
-        if method == "viewport":
+        if method == "refit":
             if event.key() == Qt.Key.Key_Right or event.key() == Qt.Key.Key_PageDown:
-                self.next_viewport_screen()
+                self.next_refit_screen()
             elif event.key() == Qt.Key.Key_Left or event.key() == Qt.Key.Key_PageUp:
-                self.prev_viewport_screen()
+                self.prev_refit_screen()
             elif event.key() == Qt.Key.Key_Home:
                 self.jump_to_absolute_first()
             elif event.key() == Qt.Key.Key_End:
@@ -295,14 +393,31 @@ class BrowserView(QWidget):
 
     def wheelEvent(self, event: QWheelEvent):
         method = self.config_manager.get_scroll_method()
-        if method == "viewport":
+        if method == "refit":
             if event.angleDelta().y() < 0:
-                self.next_viewport_screen()
+                self.next_refit_screen()
             else:
-                self.prev_viewport_screen()
+                self.prev_refit_screen()
             event.accept()
         else:
             super().wheelEvent(event)
+
+    def _on_paging_mode_changed(self, text):
+        method = "refit"
+        if text == "Continuous Mode":
+            method = "continuous"
+        elif text == "Traditional":
+            method = "paging"
+            
+        self.config_manager.settings["scroll_method"] = method
+        self.config_manager.save_settings()
+        
+        # Clear UI before reload
+        self._clear_all_content()
+        
+        # Trigger reload of current URL if available
+        if hasattr(self, '_last_loaded_url') and self._last_loaded_url:
+            asyncio.create_task(self.load_feed(self._last_loaded_url, force_refresh=True))
 
     def load_profile(self, profile):
         self.api_client = APIClient(profile)
@@ -312,15 +427,13 @@ class BrowserView(QWidget):
     async def load_feed(self, url: str, title: str = None, force_refresh: bool = False, initial_offset: int = 0):
         self._load_token += 1
         token = self._load_token
+        self._last_loaded_url = url
         
         self.progress.setVisible(True)
         self.status_label.setText(f"Loading {title or 'Catalog'}...")
         
-        # Clear existing content
-        for i in reversed(range(self.content_layout.count())):
-            item = self.content_layout.itemAt(i)
-            if item.widget():
-                item.widget().setParent(None)
+        # Clear existing content completely
+        self._clear_all_content()
 
         try:
             logger.debug(f"Fetching feed: {url}")
@@ -333,36 +446,25 @@ class BrowserView(QWidget):
             
             method = self.config_manager.get_scroll_method()
             self.paging_bar.setVisible(False)
-            self.viewport_paging_bar.setVisible(False)
+            self.refit_paging_bar.setVisible(False)
             self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             
-            # Reset viewport/infinite state
-            self.viewport_offset = initial_offset
+            # Reset refit/continuous state
+            self.refit_offset = initial_offset
             self.items_buffer = []
+            self.sparse_buffer = {}
+            # (Note: widgets cleared in _clear_all_content)
+            
+            # CRITICAL: Reset container sizing from continuous mode
+            self.content_container.setMinimumHeight(0)
+            self.content_container.setMaximumHeight(16777215)
+            self.content_container.setFixedWidth(16777215)
+            
             self.is_loading_more = False
-            self.total_items = getattr(feed.metadata, 'numberOfItems', 0)
+            self._server_index_base = None
             
-            # Calculate absolute offset of the first item in our buffer
-            curr_page = getattr(feed.metadata, 'currentPage', 1)
-            per_page = getattr(feed.metadata, 'itemsPerPage', 100)
-            if curr_page == 0: # 0-based
-                self.buffer_absolute_offset = 0
-            else: # 1-based
-                self.buffer_absolute_offset = (curr_page - 1) * per_page
-            
-            def find_rel(rel_targets):
-                if not isinstance(rel_targets, list): rel_targets = [rel_targets]
-                for link in (feed.links or []):
-                    rel = link.rel
-                    rels = [rel] if isinstance(rel, str) else (rel or [])
-                    if any(t in rels or f"http://opds-spec.org/{t}" in rels for t in rel_targets):
-                        return urljoin(url, link.href)
-                return None
-
-            self.next_url = find_rel("next")
-            self.prev_url = find_rel(["prev", "previous"])
-            self.first_url = find_rel("first")
-            self.last_url = find_rel("last")
+            # Unified update logic
+            self._update_after_fetch(feed, url, reset_offset=True)
             
             # Decide rendering mode
             is_dashboard = any(bool(getattr(g, "publications", None)) for g in (feed.groups or []))
@@ -379,16 +481,25 @@ class BrowserView(QWidget):
                 elif has_nav:
                     self.items_buffer.extend([n for n in feed.navigation if n.title != "Start"])
 
-                if method == "viewport":
-                    logger.debug("Rendering Viewport")
+                if method == "refit":
+                    logger.debug("Rendering ReFit Mode")
                     self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-                    self._render_viewport_screen()
-                elif method == "infinite":
-                    logger.debug("Rendering Infinite Scroll")
-                    self._render_infinite_page(feed, append=False)
+                    # Small delay to let UI settle for capacity calculation
+                    QTimer.singleShot(50, self._render_refit_screen)
+                elif method == "continuous":
+                    logger.debug("Rendering Continuous Mode")
+                    self._render_continuous_page(feed, append=False)
                 else: # paging
                     logger.debug("Rendering Traditional Paging")
-                    self.paging_bar.update_links(feed, url)
+                    has_paging = self.paging_bar.update_links(feed, url)
+                    self.refit_paging_bar.setVisible(False)
+                    if has_paging:
+                        self.paging_container.setVisible(True)
+                        self.paging_bar.setVisible(True)
+                    else:
+                        self.paging_container.setVisible(False)
+                        self.paging_bar.setVisible(False)
+                        
                     if has_pubs:
                         self._render_grid(feed.publications)
                         if has_nav:
@@ -406,6 +517,31 @@ class BrowserView(QWidget):
         finally:
             if token == self._load_token:
                 self.progress.setVisible(False)
+
+    def _clear_all_content(self):
+        # 1. Clear layout
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+        
+        # 2. Clear absolute positioned widgets
+        for w in list(self._rendered_widgets.values()):
+            w.hide()
+            w.deleteLater()
+        self._rendered_widgets = {}
+        
+        # 3. Final safety: check for any orphans on the container
+        for child in list(self.content_container.children()):
+            if isinstance(child, QWidget) and child != self.content_layout.parentWidget():
+                # We check if it's NOT the container widget that holds the layout
+                # Actually self.content_container IS the parent widget.
+                # The content_layout's items were cleared above.
+                # We want to clear everything EXCEPT the layout itself.
+                if child.layout() is None: # Layout-managed widgets usually have parents
+                    child.hide()
+                    child.deleteLater()
 
     def _setup_facets(self, feed: OPDSFeed):
         facet_groups = []
@@ -465,59 +601,90 @@ class BrowserView(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self.config_manager.get_scroll_method() == "viewport" and self.items_buffer:
+        if self.config_manager.get_scroll_method() == "refit" and self.items_buffer:
             # Re-render the current offset with the new capacity
-            self._render_viewport_screen()
+            self._render_refit_screen()
 
-    def _render_viewport_screen(self):
+    def _render_refit_screen(self):
         if not self.items_buffer: return
         
         self.content_layout.parentWidget().setUpdatesEnabled(False)
         # Clear existing
         for i in reversed(range(self.content_layout.count())):
-            item = self.content_layout.itemAt(i)
-            if item.widget(): item.widget().setParent(None)
+            layout_item = self.content_layout.takeAt(i)
+            if layout_item.widget():
+                layout_item.widget().deleteLater()
 
-        # Calculate capacity
-        available_h = self.scroll.viewport().height()
-        available_w = self.scroll.viewport().width()
+        # Calculate capacity with safety margins (20px padding)
+        available_h = self.scroll.viewport().height() - 20
+        available_w = self.scroll.viewport().width() - 20
+        
+        self._last_rows = 1
+        self._last_cols = 1
 
         if self.is_pub_mode:
             # PublicationCard: 160x260. Grid spacing: 10.
-            # We need (W + 10) per column, and we can fit (available_w + 10) total.
-            cols = max(1, (available_w + 10) // 170)
-            rows = max(1, (available_h + 10) // 270)
-            self.items_per_screen = cols * rows
+            self._last_cols = max(1, available_w // 175)
+            self._last_rows = max(1, available_h // 275)
+            self.items_per_screen = self._last_cols * self._last_rows
         else:
             # Navigation buttons: ~40px high.
-            self.items_per_screen = max(1, available_h // 40)
+            self._last_rows = max(1, available_h // 45)
+            self._last_cols = 1
+            self.items_per_screen = self._last_rows
 
-        # Clamp offset to prevent empty screens after resize
-        if self.viewport_offset >= len(self.items_buffer):
-            self.viewport_offset = max(0, len(self.items_buffer) - self.items_per_screen)
+        # Simplified Clamping: 
+        # Only prevent scrolling past the actual end of our items.
+        # We ALLOW the ReFit mode to show a partial screen at the very end.
+        max_allowed_offset = len(self.items_buffer) - 1
+        if self.refit_offset > max_allowed_offset:
+            self.refit_offset = max(0, max_allowed_offset)
         
-        # Align offset to a multiple of items_per_screen to keep "pages" consistent
+        # Align offset to a multiple of items_per_screen to keep "pages" consistent RELATIVE TO GLOBAL START
         if self.items_per_screen > 0:
-            page_num = self.viewport_offset // self.items_per_screen
-            self.viewport_offset = page_num * self.items_per_screen
+            current_abs_idx = self.buffer_absolute_offset + self.refit_offset
+            page_num = current_abs_idx // self.items_per_screen
+            snapped_abs_idx = page_num * self.items_per_screen
+            
+            # Map snapped global index back to local buffer offset
+            self.refit_offset = snapped_abs_idx - self.buffer_absolute_offset
+            
+            # Final boundary check: don't snap outside the buffer
+            self.refit_offset = max(0, min(self.refit_offset, len(self.items_buffer) - 1))
 
-        batch = self.items_buffer[self.viewport_offset : self.viewport_offset + self.items_per_screen]
+        batch = self.items_buffer[self.refit_offset : self.refit_offset + self.items_per_screen]
 
         if self.is_pub_mode:
             self._render_grid(batch)
         else:
             self._render_navigation(batch)
 
-        # Proactive fetch
-        if self.viewport_offset + self.items_per_screen >= len(self.items_buffer) - self.items_per_screen:
-            if self.next_url and not self.is_loading_more:
-                asyncio.create_task(self._fetch_more_for_viewport())
+        # Proactive/Aggressive fetch (Bidirectional)
+        if not self.is_loading_more:
+            per_page = 50
+            if hasattr(self, '_last_feed_metadata'):
+                per_page = getattr(self._last_feed_metadata, "itemsPerPage", 50) or 50
 
-        self._update_viewport_paging_bar()
+            # Forward pre-fetch: if buffer is small or near the end
+            if self.next_url:
+                near_end_next = self.refit_offset + self.items_per_screen >= len(self.items_buffer) - self.items_per_screen
+                is_small_buffer_next = len(self.items_buffer) < (per_page * 1.5)
+                if near_end_next or is_small_buffer_next:
+                    asyncio.create_task(self._fetch_more_for_refit(jump=near_end_next))
+            
+            # Backward pre-fetch: if we have a prev link and buffer is small or near the start
+            # (only if not already loading forward)
+            if self.prev_url and not self.is_loading_more:
+                near_start_prev = self.refit_offset < self.items_per_screen
+                is_small_buffer_prev = len(self.items_buffer) < (per_page * 1.5)
+                if near_start_prev or is_small_buffer_prev:
+                    asyncio.create_task(self._fetch_prev_for_refit(jump=False))
+
+        self._update_refit_paging_bar()
         self.content_layout.parentWidget().setUpdatesEnabled(True)
         self.setFocus()
 
-    def _update_viewport_paging_bar(self):
+    def _update_refit_paging_bar(self):
         # Calculate local total pages based on current BUFFER
         local_total_pages = math.ceil(len(self.items_buffer) / self.items_per_screen) if self.items_per_screen else 1
         
@@ -525,171 +692,243 @@ class BrowserView(QWidget):
         global_total_pages = math.ceil(self.total_items / self.items_per_screen) if (self.total_items and self.items_per_screen) else local_total_pages
         
         if global_total_pages <= 1:
-            self.viewport_paging_bar.setVisible(False)
+            self.refit_paging_bar.setVisible(False)
             return
 
-        self.viewport_paging_bar.setVisible(True)
+        self.refit_paging_bar.setVisible(True)
         
         # Calculate screen number relative to absolute server start
         if self.items_per_screen > 0:
-            current_item_index = self.buffer_absolute_offset + self.viewport_offset
+            current_item_index = self.buffer_absolute_offset + self.refit_offset
             current_page = (current_item_index // self.items_per_screen) + 1
         else:
             current_page = 1
+            
+        # Clamp to avoid Screen 163 of 160
+        current_page = min(current_page, global_total_pages)
         
         status_text = f"Screen {current_page} of {global_total_pages}"
-        if self.is_loading_more:
+        # Only show Loading... if the current screen is actually empty or we are in a hard-wait state
+        if self.is_loading_more and len(self.items_buffer) == 0:
             status_text += " (Loading...)"
-        self.viewport_paging_bar.label_status.setText(status_text)
+            
+        self.refit_paging_bar.label_status.setText(status_text)
         
-        self.viewport_paging_bar.btn_first.setEnabled(current_page > 1 or self.first_url is not None)
-        self.viewport_paging_bar.btn_prev.setEnabled(current_page > 1 or self.prev_url is not None)
-        self.viewport_paging_bar.btn_next.setEnabled(current_page < global_total_pages or self.next_url is not None)
-        self.viewport_paging_bar.btn_last.setEnabled(current_page < global_total_pages or self.last_url is not None)
+        if global_total_pages <= 1:
+            self.refit_paging_bar.setVisible(False)
+            self.paging_container.setVisible(False)
+            return
+
+        self.paging_container.setVisible(True)
+        self.refit_paging_bar.setVisible(True)
+        self.paging_bar.setVisible(False)
+        self.refit_paging_bar.btn_first.setEnabled(current_page > 1 or self.first_url is not None)
+        self.refit_paging_bar.btn_prev.setEnabled(current_page > 1 or self.prev_url is not None)
+        self.refit_paging_bar.btn_next.setEnabled(current_page < global_total_pages or self.next_url is not None)
+        self.refit_paging_bar.btn_last.setEnabled(current_page < global_total_pages or self.last_url is not None)
         
+        # Explicit Logging
+        b_f = 1 if self.refit_paging_bar.btn_first.isEnabled() else 0
+        b_p = 1 if self.refit_paging_bar.btn_prev.isEnabled() else 0
+        b_n = 1 if self.refit_paging_bar.btn_next.isEnabled() else 0
+        b_l = 1 if self.refit_paging_bar.btn_last.isEnabled() else 0
+        
+        h = self.scroll.viewport().height()
+        w = self.scroll.viewport().width()
+        
+        # Calculate server page overlap if possible
+        server_pg = "N/A"
+        server_per = "N/A"
+        if hasattr(self, '_last_feed_metadata') and self._last_feed_metadata:
+            c = getattr(self._last_feed_metadata, "currentPage", None)
+            p = getattr(self._last_feed_metadata, "itemsPerPage", None)
+            if c is not None:
+                server_pg = str(c + (1 if getattr(self, '_server_index_base', 0) == 1 else 0))
+            if p is not None:
+                server_per = str(p)
+        
+        mode_str = "PUB" if self.is_pub_mode else "NAV"
+        grid_str = f"{self._last_rows}x{self._last_cols}"
+        logger.debug(f"ReFitNav | {mode_str} | state:[F:{b_f} P:{b_p} N:{b_n} L:{b_l}] | label:'{status_text}' | ctx:[svr_items:{self.total_items}, svr_pg:{server_pg}, svr_per:{server_per}, virt_pg:{current_page}, buf_size:{len(self.items_buffer)}, abs_offset:{self.buffer_absolute_offset}] | UI:[h:{h}, w:{w}, grid:{grid_str} ({self.items_per_screen}/scr)]")
+
         # Disconnect old signals
-        for b in [self.viewport_paging_bar.btn_first, self.viewport_paging_bar.btn_prev, 
-                  self.viewport_paging_bar.btn_next, self.viewport_paging_bar.btn_last]:
+        for b in [self.refit_paging_bar.btn_first, self.refit_paging_bar.btn_prev, 
+                  self.refit_paging_bar.btn_next, self.refit_paging_bar.btn_last]:
             try: b.clicked.disconnect()
             except: pass
             
-        self.viewport_paging_bar.btn_first.clicked.connect(lambda: self.jump_to_absolute_first() or self.setFocus())
-        self.viewport_paging_bar.btn_prev.clicked.connect(lambda: self.prev_viewport_screen() or self.setFocus())
-        self.viewport_paging_bar.btn_next.clicked.connect(lambda: self.next_viewport_screen() or self.setFocus())
-        self.viewport_paging_bar.btn_last.clicked.connect(lambda: self.jump_to_absolute_last() or self.setFocus())
+        self.refit_paging_bar.btn_first.clicked.connect(lambda: self.jump_to_absolute_first() or self.setFocus())
+        self.refit_paging_bar.btn_prev.clicked.connect(lambda: self.prev_refit_screen() or self.setFocus())
+        self.refit_paging_bar.btn_next.clicked.connect(lambda: self.next_refit_screen() or self.setFocus())
+        self.refit_paging_bar.btn_last.clicked.connect(lambda: self.jump_to_absolute_last() or self.setFocus())
 
-    def next_viewport_screen(self):
-        if self.viewport_offset + self.items_per_screen < len(self.items_buffer):
-            self.viewport_offset += self.items_per_screen
-            if self.on_offset_change: self.on_offset_change(self.viewport_offset)
-            self._render_viewport_screen()
+    def next_refit_screen(self):
+        logger.debug("User clicked ReFit Next Screen")
+        if self.refit_offset + self.items_per_screen < len(self.items_buffer):
+            self.refit_offset += self.items_per_screen
+            if self.on_offset_change: self.on_offset_change(self.refit_offset)
+            self._render_refit_screen()
         elif self.next_url and not self.is_loading_more:
             self.is_loading_more = True
-            asyncio.create_task(self._fetch_more_for_viewport())
+            asyncio.create_task(self._fetch_more_for_refit(jump=True))
 
-    async def _fetch_more_for_viewport(self):
+    async def _fetch_more_for_refit(self, jump=False):
+        if self.is_loading_more: return
+        self.is_loading_more = True
         self.progress.setVisible(True)
         try:
             feed = await self.opds_client.get_feed(self.next_url)
-            self._update_after_fetch(feed, self.next_url)
+            self._update_after_fetch(feed, self.next_url, reset_offset=False)
             
-            if self.is_pub_mode:
-                self.items_buffer.extend(feed.publications or [])
-            else:
-                self.items_buffer.extend([n for n in (feed.navigation or []) if n.title != "Start"])
+            new_items = feed.publications or [n for n in (feed.navigation or []) if n.title != "Start"]
+            
+            # Prevent duplicates
+            existing_ids = {getattr(i, 'id', None) or getattr(i, 'href', None) for i in self.items_buffer}
+            filtered_new = [i for i in new_items if (getattr(i, 'id', None) or getattr(i, 'href', None)) not in existing_ids]
+            
+            if filtered_new:
+                self.items_buffer.extend(filtered_new)
+                logger.debug(f"Buffer Extended (Forward) | added:{len(filtered_new)}, total:{len(self.items_buffer)}")
                 
-            # Jump forward now that buffer is expanded
-            self.viewport_offset += self.items_per_screen
-            if self.on_offset_change: self.on_offset_change(self.viewport_offset)
-            self._render_viewport_screen()
+            if jump:
+                # Only jump if there's actually more room in the total item count
+                current_abs_idx = self.buffer_absolute_offset + self.refit_offset
+                if current_abs_idx + self.items_per_screen < self.total_items:
+                    self.refit_offset += self.items_per_screen
+                    if self.on_offset_change: self.on_offset_change(self.refit_offset)
+            
+            self._render_refit_screen()
         except Exception as e:
-            logger.error(f"Error fetching more for viewport: {e}")
+            logger.error(f"Error fetching more for ReFit: {e}")
         finally:
             self.is_loading_more = False
             self.progress.setVisible(False)
 
-    def prev_viewport_screen(self):
-        if self.viewport_offset > 0:
-            self.viewport_offset = max(0, self.viewport_offset - self.items_per_screen)
-            if self.on_offset_change: self.on_offset_change(self.viewport_offset)
-            self._render_viewport_screen()
+    def prev_refit_screen(self):
+        logger.debug("User clicked ReFit Prev Screen")
+        if self.refit_offset > 0:
+            self.refit_offset = max(0, self.refit_offset - self.items_per_screen)
+            if self.on_offset_change: self.on_offset_change(self.refit_offset)
+            self._render_refit_screen()
         elif self.prev_url and not self.is_loading_more:
-            self.is_loading_more = True
-            asyncio.create_task(self._fetch_prev_for_viewport())
+            asyncio.create_task(self._fetch_prev_for_refit(jump=True))
 
-    async def _fetch_prev_for_viewport(self):
+    async def _fetch_prev_for_refit(self, jump=False):
+        if self.is_loading_more: return
+        self.is_loading_more = True
         self.progress.setVisible(True)
         try:
             feed = await self.opds_client.get_feed(self.prev_url)
-            self._update_after_fetch(feed, self.prev_url)
+            self._update_after_fetch(feed, self.prev_url, reset_offset=False)
             
             new_items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
-            count = len(new_items)
-            # Prepend to buffer
-            self.items_buffer = new_items + self.items_buffer
             
-            # Update absolute offset
-            self.buffer_absolute_offset -= count
-            if self.buffer_absolute_offset < 0: self.buffer_absolute_offset = 0
+            # Prevent duplicates
+            existing_ids = {getattr(i, 'id', None) or getattr(i, 'href', None) for i in self.items_buffer}
+            filtered_new = [i for i in new_items if (getattr(i, 'id', None) or getattr(i, 'href', None)) not in existing_ids]
             
-            # Adjust offset so we stay on the "same" items relative to the start
-            self.viewport_offset += count
-            # Now move back one screen
-            self.viewport_offset = max(0, self.viewport_offset - self.items_per_screen)
-            if self.on_offset_change: self.on_offset_change(self.viewport_offset)
-            self._render_viewport_screen()
+            if filtered_new:
+                count = len(filtered_new)
+                self.items_buffer = filtered_new + self.items_buffer
+                
+                # Update absolute offset
+                self.buffer_absolute_offset -= count
+                if self.buffer_absolute_offset < 0: self.buffer_absolute_offset = 0
+                
+                # Adjust offset so we stay on the "same" items relative to the start
+                self.refit_offset += count
+                logger.debug(f"Buffer Extended (Backward) | added:{count}, total:{len(self.items_buffer)}, new_abs_offset:{self.buffer_absolute_offset}")
+            
+            if jump:
+                self.refit_offset = max(0, self.refit_offset - self.items_per_screen)
+                if self.on_offset_change: self.on_offset_change(self.refit_offset)
+                
+            self._render_refit_screen()
         except Exception as e:
-            logger.error(f"Error fetching prev for viewport: {e}")
+            logger.error(f"Error fetching prev for ReFit: {e}")
         finally:
             self.is_loading_more = False
             self.progress.setVisible(False)
 
-    def jump_to_viewport_offset(self, offset):
-        self.viewport_offset = max(0, min(offset, len(self.items_buffer) - self.items_per_screen))
-        if self.on_offset_change: self.on_offset_change(self.viewport_offset)
-        self._render_viewport_screen()
+    def jump_to_refit_offset(self, offset):
+        self.refit_offset = max(0, min(offset, len(self.items_buffer) - self.items_per_screen))
+        if self.on_offset_change: self.on_offset_change(self.refit_offset)
+        self._render_refit_screen()
 
     def jump_to_absolute_first(self):
+        logger.debug("User clicked ReFit Jump First")
         if self.first_url:
             asyncio.create_task(self._fetch_absolute_first())
         else:
-            self.jump_to_viewport_offset(0)
+            self.jump_to_refit_offset(0)
 
     async def _fetch_absolute_first(self):
         self.progress.setVisible(True)
         try:
             feed = await self.opds_client.get_feed(self.first_url)
             self.items_buffer = feed.publications or [n for n in feed.navigation if n.title != "Start"]
-            self.viewport_offset = 0
+            self.refit_offset = 0
             self.buffer_absolute_offset = 0 # It's the first page
             self._update_after_fetch(feed, self.first_url)
-            self._render_viewport_screen()
+            self._render_refit_screen()
         except Exception as e:
             logger.error(f"Error jumping to first: {e}")
         finally:
             self.progress.setVisible(False)
 
     def jump_to_absolute_last(self):
+        logger.debug("User clicked ReFit Jump Last")
         if self.last_url:
             asyncio.create_task(self._fetch_absolute_last())
         else:
-            self.jump_to_viewport_offset(len(self.items_buffer) - self.items_per_screen)
+            self.jump_to_refit_offset(len(self.items_buffer) - self.items_per_screen)
 
     async def _fetch_absolute_last(self):
+        if self.is_loading_more: return
+        self.is_loading_more = True
         self.progress.setVisible(True)
         try:
             feed = await self.opds_client.get_feed(self.last_url)
+            # HARD RESET: replace buffer to ensure perfect alignment
             self.items_buffer = feed.publications or [n for n in feed.navigation if n.title != "Start"]
             
-            # Update metadata
-            self._update_after_fetch(feed, self.last_url)
+            # 1. Update metadata and ABSOLUTE OFFSET
+            self._update_after_fetch(feed, self.last_url, reset_offset=True)
             
-            # Align viewport to the start of the last screen in this new buffer
+            # 2. Wait for UI to settle
+            await asyncio.sleep(0.05)
+            
+            # 3. Align ReFit to the absolute global end
             if self.items_per_screen > 0:
-                # Find how many items are in the final partial screen
-                remainder = len(self.items_buffer) % self.items_per_screen
-                if remainder == 0:
-                    self.viewport_offset = max(0, len(self.items_buffer) - self.items_per_screen)
-                else:
-                    self.viewport_offset = len(self.items_buffer) - remainder
+                # Target the start of the final screen globally
+                target_global_start = ((self.total_items - 1) // self.items_per_screen) * self.items_per_screen
+                # Calculate local offset within THIS buffer
+                self.refit_offset = target_global_start - self.buffer_absolute_offset
+                self.refit_offset = max(0, min(self.refit_offset, len(self.items_buffer) - 1))
             else:
-                self.viewport_offset = 0
+                self.refit_offset = 0
                 
-            self._render_viewport_screen()
+            self._render_refit_screen()
         except Exception as e:
             logger.error(f"Error jumping to last: {e}")
         finally:
             self.progress.setVisible(False)
 
-    def _update_after_fetch(self, feed, url):
+    def _update_after_fetch(self, feed, url, reset_offset=True):
+        self._last_feed_metadata = feed.metadata
         self.total_items = getattr(feed.metadata, 'numberOfItems', self.total_items)
         
-        curr_page = getattr(feed.metadata, 'currentPage', 1)
-        per_page = getattr(feed.metadata, 'itemsPerPage', 100)
-        if curr_page == 0: # 0-based
-            self.buffer_absolute_offset = 0
-        else: # 1-based
-            self.buffer_absolute_offset = (curr_page - 1) * per_page
+        # 1. Determine and lock the server index base (0 vs 1) for this session if not yet known
+        if not hasattr(self, '_server_index_base') or self._server_index_base is None:
+            curr_page = getattr(feed.metadata, 'currentPage', None)
+            if curr_page is not None:
+                # If we are on the first page (no prev link), curr_page IS our base.
+                has_prev = any(l.rel == "prev" or l.rel == "previous" for l in (feed.links or []))
+                if not has_prev:
+                    self._server_index_base = curr_page
+                else:
+                    # Guess: 0 if we see a 0, else 1
+                    self._server_index_base = 0 if curr_page == 0 else 1
 
         def find_rel(rel_targets):
             if not isinstance(rel_targets, list): rel_targets = [rel_targets]
@@ -699,17 +938,284 @@ class BrowserView(QWidget):
                 if any(t in rels or f"http://opds-spec.org/{t}" in rels for t in rel_targets):
                     return urljoin(url, link.href)
             return None
+            
         self.next_url = find_rel("next")
         self.prev_url = find_rel(["prev", "previous"])
         self.first_url = find_rel("first")
         self.last_url = find_rel("last")
 
-    def _render_infinite_page(self, feed, append=False):
-        pass
+        if reset_offset:
+            curr_page = getattr(feed.metadata, 'currentPage', None)
+            per_page = getattr(feed.metadata, 'itemsPerPage', 100)
+            if curr_page is not None:
+                base = self._server_index_base if self._server_index_base is not None else 1
+                self.buffer_absolute_offset = (curr_page - base) * per_page
+                logger.debug(f"Paging Detection | curr_pg:{curr_page}, base:{base}, abs_offset:{self.buffer_absolute_offset}")
+
+    def _on_scroll_event(self, value):
+        if self.config_manager.get_scroll_method() == "continuous":
+            self._scroll_debounce.start()
+            
+            # Throttled live update during scrub (~20fps)
+            now = time.time()
+            if not hasattr(self, '_last_scroll_update'): self._last_scroll_update = 0
+            if now - self._last_scroll_update > 0.05:
+                self._sync_continuous_view()
+                self._last_scroll_update = now
+
+    def _on_scroll_settled(self):
+        if self.config_manager.get_scroll_method() == "continuous":
+            # Final sync and trigger background fetches
+            self._sync_continuous_view()
+            asyncio.create_task(self._update_continuous_data())
+
+    def _render_continuous_page(self, feed, append=False):
+        # 1. Setup virtual canvas size
+        available_w = self.scroll.viewport().width() - 20
+        self._last_cols = max(1, available_w // 175) if self.is_pub_mode else 1
+        item_h = 275 if self.is_pub_mode else 45
+        
+        rows = math.ceil(self.total_items / self._last_cols) if self._last_cols > 0 else 0
+        total_h = rows * item_h
+        
+        # We use fixed size for the container to lock the scrollbar range
+        self.content_container.setMinimumHeight(total_h)
+        self.content_container.setMaximumHeight(total_h)
+        self.content_container.setFixedWidth(self.scroll.viewport().width())
+        # 2. Inject current feed items into sparse buffer
+        start_idx = self.buffer_absolute_offset
+        items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
+        for i, item in enumerate(items):
+            self.sparse_buffer[start_idx + i] = item
+            
+        # 3. Trigger initial sync
+        self._sync_continuous_view()
+        asyncio.create_task(self._update_continuous_data())
+
+    def _sync_continuous_view(self):
+        """Synchronously update visible widgets based on current scroll position."""
+        if not self.total_items: return
+        
+        # 1. Calculate visible range
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        item_h = 275 if self.is_pub_mode else 45
+        cols = self._last_cols
+        
+        start_row = scroll_y // item_h
+        end_row = (scroll_y + viewport_h) // item_h
+        
+        # Buffer of 1 row above/below
+        start_row = max(0, start_row - 1)
+        end_row = min(math.ceil(self.total_items / cols), end_row + 1)
+        
+        visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+        
+        # 2. Update status text
+        current_idx = start_row * cols
+        # Estimate items per screen for the label
+        est_items = ((viewport_h // item_h) + 1) * cols
+        self.status_label.setText(f"Showing {current_idx+1}-{min(self.total_items, current_idx + est_items)} of {self.total_items}")
+
+        # 3. Handle widget lifecycle
+        self._render_visible_range(visible_indices, item_h, cols)
+
+    async def _update_continuous_data(self):
+        if not self.total_items or self._is_updating_continuous: return
+        self._is_updating_continuous = True
+        
+        try:
+            tried_pages = set()
+            while True:
+                # Calculate visible range again
+                viewport_h = self.scroll.viewport().height()
+                scroll_y = self.scroll.verticalScrollBar().value()
+                item_h = 275 if self.is_pub_mode else 45
+                cols = self._last_cols
+                start_row = max(0, (scroll_y // item_h) - 1)
+                end_row = min(math.ceil(self.total_items / cols), (scroll_y + viewport_h) // item_h + 1)
+                visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+                
+                missing = [i for i in visible_indices if i not in self.sparse_buffer]
+                if not missing:
+                    break
+                    
+                per_page = 100
+                if hasattr(self, '_last_feed_metadata'):
+                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+                
+                target_idx = missing[0]
+                target_page = (target_idx // per_page) + (self._server_index_base or 0)
+                
+                if target_page in tried_pages:
+                    break
+                tried_pages.add(target_page)
+                
+                success = await self._fetch_missing_indices(missing)
+                # Sync UI immediately after fetch
+                self._sync_continuous_view()
+                
+                if not success:
+                    break
+        finally:
+            self._is_updating_continuous = False
+
+    def _render_visible_range(self, visible_indices, item_h, cols):
+        # Update Status
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        start_row = scroll_y // item_h
+        current_idx = start_row * cols
+        # self.status_label.setText handled in sync_view
+
+        # Remove widgets no longer visible
+        to_remove = set(self._rendered_widgets.keys()) - visible_indices
+        for idx in to_remove:
+            w = self._rendered_widgets.pop(idx)
+            w.hide()
+            w.deleteLater()
+            
+        # Add or update visible ones
+        for idx in visible_indices:
+            has_data = idx in self.sparse_buffer
+            existing_widget = self._rendered_widgets.get(idx)
+            
+            # If we have a placeholder but now have data, replace it
+            if existing_widget and getattr(existing_widget, 'is_placeholder', False) and has_data:
+                existing_widget.hide()
+                existing_widget.deleteLater()
+                del self._rendered_widgets[idx]
+                existing_widget = None
+
+            if not existing_widget:
+                if has_data:
+                    item_data = self.sparse_buffer[idx]
+                    widget = self._create_continuous_widget(item_data)
+                else:
+                    widget = self._create_placeholder_widget()
+                
+                widget.setParent(self.content_container)
+                row = idx // cols
+                col = idx % cols
+                x = col * 175 if self.is_pub_mode else 0
+                y = row * item_h
+                widget.move(x, y)
+                widget.show()
+                self._rendered_widgets[idx] = widget
+
+    def _create_placeholder_widget(self):
+        w = QFrame()
+        w.is_placeholder = True
+        if self.is_pub_mode:
+            w.setFixedSize(160, 260)
+            w.setStyleSheet("background-color: #1a1a1a; border-radius: 5px; border: 1px dashed #333;")
+            layout = QVBoxLayout(w)
+            lbl = QLabel("...")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("color: #444;")
+            layout.addWidget(lbl)
+        else:
+            w.setFixedSize(self.content_container.width() - 20, 40)
+            w.setStyleSheet("background-color: #1a1a1a; border-radius: 4px; border: 1px dashed #333;")
+        return w
+
+    def _create_continuous_widget(self, item):
+        if isinstance(item, Publication):
+            card = PublicationCard(item, self.api_client.profile.get_base_url(), self.image_manager)
+            card.clicked.connect(self.on_open_detail_callback)
+            return card
+        else:
+            # Navigation
+            btn = QPushButton(item.title)
+            btn.setFixedSize(self.content_container.width() - 20, 40)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setStyleSheet("text-align: left; padding: 10px; background-color: #2d2d2d; color: white; border: 1px solid #3e3e42; border-radius: 4px;")
+            u = urljoin(self.api_client.profile.get_base_url(), item.href)
+            btn.clicked.connect(lambda _, url=u, t=item.title: self.on_navigate(url, t))
+            return btn
+
+    async def _fetch_missing_indices(self, missing_indices):
+        if self.is_loading_more: return False
+        
+        # 1. Group missing indices into server pages
+        per_page = 100 # Default
+        if hasattr(self, '_last_feed_metadata'):
+            per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+            
+        # Target the first missing index's page
+        target_idx = missing_indices[0]
+        target_page = (target_idx // per_page) + (self._server_index_base or 0)
+        
+        # 2. Predict URL
+        url = self._predict_page_url(target_page)
+        if not url:
+            return False
+
+        self.is_loading_more = True
+        self.progress.setVisible(True)
+        try:
+            feed = await self.opds_client.get_feed(url)
+            self._update_after_fetch(feed, url, reset_offset=False)
+            
+            # Map fetched items to their global indices
+            page_start_idx = (target_page - (self._server_index_base or 0)) * per_page
+            new_items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
+            
+            if not new_items:
+                return False
+
+            for i, item in enumerate(new_items):
+                self.sparse_buffer[page_start_idx + i] = item
+            
+            return True
+                
+        except Exception as e:
+            logger.error(f"Continuous mode fetch error: {e}")
+            return False
+        finally:
+            self.is_loading_more = False
+            self.progress.setVisible(False)
+
+    def _predict_page_url(self, page_num):
+        """Predict the URL for a specific page number based on common patterns."""
+        # Use next_url or last_url as a template if available, they are more likely to have params
+        template_url = self.next_url or self.last_url or self._last_loaded_url
+        if not template_url: return None
+        
+        import re
+        url = template_url
+        
+        # Pattern 1: &page=X or ?page=X (Komga, Stump)
+        if "page=" in url:
+            new_url = re.sub(r'page=\d+', f'page={page_num}', url)
+            logger.debug(f"Predict | Pattern:PageParam, Result: {new_url}")
+            return new_url
+            
+        # Pattern 2: Path-based (Codex: .../p/0/1 -> .../p/0/32)
+        from urllib.parse import urlparse, urlunparse
+        u = urlparse(url)
+        path_parts = u.path.split('/')
+        
+        # Find the last numeric part
+        for i in reversed(range(len(path_parts))):
+            if path_parts[i].isdigit():
+                path_parts[i] = str(page_num)
+                new_path = '/'.join(path_parts)
+                new_url = urlunparse(u._replace(path=new_path))
+                logger.debug(f"Predict | Pattern:PathSegment, Result: {new_url}")
+                return new_url
+                
+        # Fallback Pattern
+        if "?" in self._last_loaded_url:
+            new_url = f"{self._last_loaded_url}&page={page_num}"
+        else:
+            new_url = f"{self._last_loaded_url}?page={page_num}"
+        logger.debug(f"Predict | Pattern:Fallback, Result: {new_url}")
+        return new_url
 
     def _render_dashboard(self, feed: OPDSFeed):
         self.paging_bar.setVisible(False)
-        self.viewport_paging_bar.setVisible(False)
+        self.refit_paging_bar.setVisible(False)
         if feed.navigation:
             self._render_navigation(feed.navigation)
 

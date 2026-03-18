@@ -187,7 +187,10 @@ class ServersView(QWidget):
                     if not pixmap.isNull():
                         setattr(profile, "_cached_icon", pixmap)
                         if item:
-                            item.setIcon(QIcon(pixmap))
+                            try:
+                                item.setIcon(QIcon(pixmap))
+                            except RuntimeError:
+                                pass
                         self.icon_loaded.emit(profile.id, pixmap)
             await client.close()
         except Exception as e:

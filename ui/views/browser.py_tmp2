@@ -1,0 +1,151 @@
+    def _on_scroll_event(self, value):
+        if self.config_manager.get_scroll_method() == "continuous":
+            self._scroll_debounce.start()
+            
+            # Throttled live update during scrub (~20fps)
+            now = time.time()
+            if not hasattr(self, '_last_scroll_update'): self._last_scroll_update = 0
+            if now - self._last_scroll_update > 0.05:
+                self._sync_continuous_view()
+                self._last_scroll_update = now
+
+    def _on_scroll_settled(self):
+        if self.config_manager.get_scroll_method() == "continuous":
+            # Final sync and trigger background fetches
+            self._sync_continuous_view()
+            asyncio.create_task(self._update_continuous_data())
+
+    def _render_continuous_page(self, feed, append=False):
+        # 1. Setup virtual canvas size
+        available_w = self.scroll.viewport().width() - 20
+        self._last_cols = max(1, available_w // 175) if self.is_pub_mode else 1
+        item_h = 275 if self.is_pub_mode else 45
+        
+        rows = math.ceil(self.total_items / self._last_cols) if self._last_cols > 0 else 0
+        total_h = rows * item_h
+        
+        # We use fixed size for the container to lock the scrollbar range
+        self.content_container.setMinimumHeight(total_h)
+        self.content_container.setMaximumHeight(total_h)
+        self.content_container.setFixedWidth(self.scroll.viewport().width())
+        
+        # 2. Inject current feed items into sparse buffer
+        start_idx = self.buffer_absolute_offset
+        items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
+        for i, item in enumerate(items):
+            self.sparse_buffer[start_idx + i] = item
+            
+        # 3. Trigger initial sync
+        self._sync_continuous_view()
+        asyncio.create_task(self._update_continuous_data())
+
+    def _sync_continuous_view(self):
+        """Synchronously update visible widgets based on current scroll position."""
+        if not self.total_items: return
+        
+        # 1. Calculate visible range
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        item_h = 275 if self.is_pub_mode else 45
+        cols = self._last_cols
+        
+        start_row = scroll_y // item_h
+        end_row = (scroll_y + viewport_h) // item_h
+        
+        # Buffer of 1 row above/below
+        start_row = max(0, start_row - 1)
+        end_row = min(math.ceil(self.total_items / cols), end_row + 1)
+        
+        visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+        
+        # 2. Update status text
+        current_idx = start_row * cols
+        # Estimate items per screen for the label
+        est_items = ((viewport_h // item_h) + 1) * cols
+        self.status_label.setText(f"Showing {current_idx+1}-{min(self.total_items, current_idx + est_items)} of {self.total_items}")
+
+        # 3. Handle widget lifecycle
+        self._render_visible_range(visible_indices, item_h, cols)
+
+    async def _update_continuous_data(self):
+        if not self.total_items or self._is_updating_continuous: return
+        self._is_updating_continuous = True
+        
+        try:
+            tried_pages = set()
+            while True:
+                # Calculate visible range again
+                viewport_h = self.scroll.viewport().height()
+                scroll_y = self.scroll.verticalScrollBar().value()
+                item_h = 275 if self.is_pub_mode else 45
+                cols = self._last_cols
+                start_row = max(0, (scroll_y // item_h) - 1)
+                end_row = min(math.ceil(self.total_items / cols), (scroll_y + viewport_h) // item_h + 1)
+                visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+                
+                missing = [i for i in visible_indices if i not in self.sparse_buffer]
+                if not missing:
+                    break
+                    
+                per_page = 100
+                if hasattr(self, '_last_feed_metadata'):
+                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+                
+                target_idx = missing[0]
+                target_page = (target_idx // per_page) + (self._server_index_base or 0)
+                
+                if target_page in tried_pages:
+                    break
+                tried_pages.add(target_page)
+                
+                success = await self._fetch_missing_indices(missing)
+                # Sync UI immediately after fetch
+                self._sync_continuous_view()
+                
+                if not success:
+                    break
+        finally:
+            self._is_updating_continuous = False
+
+    def _render_visible_range(self, visible_indices, item_h, cols):
+        # Update Status
+        viewport_h = self.scroll.viewport().height()
+        scroll_y = self.scroll.verticalScrollBar().value()
+        start_row = scroll_y // item_h
+        current_idx = start_row * cols
+        # self.status_label.setText handled in sync_view
+
+        # Remove widgets no longer visible
+        to_remove = set(self._rendered_widgets.keys()) - visible_indices
+        for idx in to_remove:
+            w = self._rendered_widgets.pop(idx)
+            w.hide()
+            w.deleteLater()
+            
+        # Add or update visible ones
+        for idx in visible_indices:
+            has_data = idx in self.sparse_buffer
+            existing_widget = self._rendered_widgets.get(idx)
+            
+            # If we have a placeholder but now have data, replace it
+            if existing_widget and getattr(existing_widget, 'is_placeholder', False) and has_data:
+                existing_widget.hide()
+                existing_widget.deleteLater()
+                del self._rendered_widgets[idx]
+                existing_widget = None
+
+            if not existing_widget:
+                if has_data:
+                    item_data = self.sparse_buffer[idx]
+                    widget = self._create_continuous_widget(item_data)
+                else:
+                    widget = self._create_placeholder_widget()
+                
+                widget.setParent(self.content_container)
+                row = idx // cols
+                col = idx % cols
+                x = col * 175 if self.is_pub_mode else 0
+                y = row * item_h
+                widget.move(x, y)
+                widget.show()
+                self._rendered_widgets[idx] = widget

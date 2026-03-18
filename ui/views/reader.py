@@ -23,10 +23,11 @@ class ReaderView(QWidget):
     """
     High-performance streaming OPDS reader using QGraphicsView.
     """
-    def __init__(self, api_client: APIClient, on_exit):
+    def __init__(self, config_manager, on_exit):
         super().__init__()
-        self.api_client = api_client
+        self.config_manager = config_manager
         self.on_exit = on_exit
+        self.api_client = None
         self.image_manager = None
         self.progression_sync = None
         self.progression_url = None
@@ -111,19 +112,32 @@ class ReaderView(QWidget):
         self._manifest_url = manifest_url
         self.title_label.setText(pub.metadata.title)
         self.image_manager = ImageManager(self.api_client)
-        self.progression_sync = ProgressionSync(self.api_client)
+        
+        device_id = self.config_manager.get_device_id()
+        self.progression_sync = ProgressionSync(self.api_client, device_id)
         self._reading_order = []
         self._index = 0
         self._prefetch_set.clear()
         
-        # Determine progression URL
-        self.progression_url = None
-        for link in pub.links:
-            if getattr(link, 'rel', '') == "http://www.cantook.com/api/progression":
-                self.progression_url = urljoin(self.api_client.profile.get_base_url(), link.href)
-                break
+        # Initial discovery from pub links
+        self.progression_url = self._discover_progression_url(pub.links)
 
         asyncio.create_task(self._fetch_and_load(self._load_token))
+
+    def _discover_progression_url(self, links):
+        for link in (links or []):
+            rel = getattr(link, 'rel', None) or (link.get('rel') if isinstance(link, dict) else None)
+            rels = [rel] if isinstance(rel, str) else (rel or [])
+            if any(r in rels for r in [
+                "http://opds-spec.org/rel/progression",
+                "http://readium.org/rel/progression",
+                "http://librarysimplified.org/terms/rel/state", 
+                "http://www.cantook.com/api/progression"
+            ]):
+                href = getattr(link, 'href', None) or (link.get('href') if isinstance(link, dict) else None)
+                if href:
+                    return urljoin(self.api_client.profile.get_base_url(), href)
+        return None
 
     async def _fetch_and_load(self, token: int):
         try:
@@ -133,6 +147,11 @@ class ReaderView(QWidget):
                 data = response.json()
                 if "readingOrder" in data:
                     self._reading_order = data["readingOrder"]
+                
+                # Check for progression link in manifest itself
+                manifest_prog_url = self._discover_progression_url(data.get("links", []))
+                if manifest_prog_url:
+                    self.progression_url = manifest_prog_url
             elif self._current_pub.readingOrder:
                 self._reading_order = [item.model_dump() for item in self._current_pub.readingOrder]
 
@@ -145,9 +164,21 @@ class ReaderView(QWidget):
             # Initial index from progression if available
             if self.progression_url:
                 prog_data = await self.progression_sync.get_progression(self.progression_url)
-                if prog_data and "progression" in prog_data:
-                    pct = prog_data["progression"]
-                    self._index = int(pct * len(self._reading_order))
+                if prog_data:
+                    # Check for nested Readium Locator structure first
+                    loc = prog_data.get("locator", {}).get("locations", {})
+                    pct = loc.get("progression")
+                    pos = loc.get("position")
+                    
+                    # Fallback to flat structure
+                    if pct is None:
+                        pct = prog_data.get("progression")
+                        
+                    if pos is not None and pos > 0:
+                        self._index = pos - 1
+                    elif pct is not None:
+                        self._index = int(pct * len(self._reading_order))
+                        
                     self._index = min(max(self._index, 0), len(self._reading_order) - 1)
 
             await self._show_page()
@@ -209,7 +240,18 @@ class ReaderView(QWidget):
         if self.progression_url and total > 0:
             pct = idx / total
             if idx == total - 1: pct = 1.0
-            asyncio.create_task(self.progression_sync.update_progression(self.progression_url, pct, pct))
+            
+            p_title = item.get("title", f"Page {idx + 1}")
+            p_type = item.get("type", "image/jpeg")
+            
+            asyncio.create_task(self.progression_sync.update_progression(
+                self.progression_url, 
+                fraction=pct, 
+                title=p_title, 
+                href=href, 
+                position=idx + 1, 
+                content_type=p_type
+            ))
 
     def _fit_image(self):
         if self.pixmap_item.pixmap().isNull(): return

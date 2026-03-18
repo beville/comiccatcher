@@ -13,7 +13,9 @@ from PyQt6.QtGui import QPixmap
 
 from logger import get_logger
 from api.image_manager import ImageManager
+from api.progression import ProgressionSync
 from models.opds import Publication, Contributor, Link
+from ui.flow_layout import FlowLayout
 from ui.image_data import TRANSPARENT_DATA_URL
 
 logger = get_logger("ui.detail")
@@ -45,8 +47,9 @@ class ClickableBadge(QFrame):
         super().mousePressEvent(event)
 
 class DetailView(QWidget):
-    def __init__(self, on_back, on_read, on_navigate, on_start_download, on_open_detail):
+    def __init__(self, config_manager, on_back, on_read, on_navigate, on_start_download, on_open_detail):
         super().__init__()
+        self.config_manager = config_manager
         self.on_back = on_back
         self.on_read = on_read
         self.on_navigate = on_navigate
@@ -56,6 +59,7 @@ class DetailView(QWidget):
         self.api_client = None
         self.opds_client = None
         self.image_manager = None
+        self.progression_sync = None
         
         self._current_pub = None
         self._current_base_url = None
@@ -93,6 +97,10 @@ class DetailView(QWidget):
         self.api_client = api_client
         self.opds_client = opds_client
         self.image_manager = image_manager
+        
+        device_id = self.config_manager.get_device_id()
+        self.progression_sync = ProgressionSync(api_client, device_id)
+        
         self._current_pub = pub
         self._current_base_url = base_url
         self._active_load_id = str(uuid.uuid4())
@@ -104,6 +112,7 @@ class DetailView(QWidget):
             asyncio.create_task(self._fetch_full_metadata(pub, base_url, self._active_load_id, force_refresh))
         else:
             self.progress.setVisible(False)
+            asyncio.create_task(self._fetch_progression(pub, base_url, self._active_load_id))
 
     async def _fetch_full_metadata(self, pub: Publication, base_url: str, load_id: str, force_refresh: bool = False):
         manifest_url = None
@@ -124,26 +133,71 @@ class DetailView(QWidget):
                     
                     self._current_pub = full_pub
                     self._render_details(full_pub, base_url)
+                    asyncio.create_task(self._fetch_progression(full_pub, base_url, load_id))
             except Exception as e:
                 logger.error(f"Error upgrading metadata: {e}")
         
         if load_id == self._active_load_id:
             self.progress.setVisible(False)
 
+    async def _fetch_progression(self, pub: Publication, base_url: str, load_id: str):
+        prog_url = None
+        for link in pub.links:
+            rels = [link.rel] if isinstance(link.rel, str) else (link.rel or [])
+            if any(r in rels for r in ["http://librarysimplified.org/terms/rel/state", "http://www.cantook.com/api/progression", "http://readium.org/rel/progression"]):
+                prog_url = urljoin(base_url, link.href)
+                break
+        
+        if prog_url and load_id == self._active_load_id:
+            try:
+                data = await self.progression_sync.get_progression(prog_url)
+                if data and load_id == self._active_load_id:
+                    # Check for nested Readium Locator structure first
+                    loc = data.get("locator", {}).get("locations", {})
+                    pct = loc.get("progression")
+                    pos = loc.get("position")
+                    
+                    # Fallback to flat structure
+                    if pct is None:
+                        pct = data.get("progression")
+                    
+                    if pct is not None:
+                        self._update_progression_ui(float(pct), pub, pos)
+            except Exception as e:
+                logger.error(f"Error fetching progression: {e}")
+
+    def _update_progression_ui(self, pct: float, pub: Publication, pos: int = None):
+        if hasattr(self, 'progression_label'):
+            total_pages = 0
+            if pub.readingOrder:
+                total_pages = len(pub.readingOrder)
+            elif hasattr(pub.metadata, 'numberOfPages') and pub.metadata.numberOfPages:
+                total_pages = int(pub.metadata.numberOfPages)
+            
+            if total_pages > 0:
+                if pos is not None and pos > 0:
+                    current_page = pos
+                else:
+                    current_page = int(pct * total_pages) + 1
+                
+                current_page = min(current_page, total_pages)
+                self.progression_label.setText(f"Page {current_page} of {total_pages} ({int(pct*100)}%)")
+            else:
+                self.progression_label.setText(f"Progress: {int(pct*100)}%")
+
     def _render_details(self, pub: Publication, base_url: str):
-        for i in reversed(range(self.content_layout.count())):
-            item = self.content_layout.itemAt(i)
-            if item.widget(): item.widget().setParent(None)
+        self._clear_layout(self.content_layout)
 
         m = pub.metadata
-        top_layout = QHBoxLayout()
+        top_layout = FlowLayout(spacing=20)
         
         # Cover
         cover_label = QLabel()
-        cover_label.setFixedSize(300, 450)
+        cover_label.setMinimumSize(200, 300)
+        cover_label.setMaximumSize(300, 450)
         cover_label.setStyleSheet("background-color: #111; border: 1px solid #444;")
         cover_label.setScaledContents(True)
-        top_layout.addWidget(cover_label, 0, Qt.AlignmentFlag.AlignTop)
+        top_layout.addWidget(cover_label)
         
         img_url = self._get_image_url(pub)
         if img_url:
@@ -152,16 +206,16 @@ class DetailView(QWidget):
         # Info Column
         info_widget = QWidget()
         info_layout = QVBoxLayout(info_widget)
-        info_layout.setContentsMargins(20, 0, 0, 0)
+        info_layout.setContentsMargins(0, 0, 0, 0)
         
         title = QLabel(m.title)
-        title.setStyleSheet("font-size: 24px; font-weight: bold;")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #111;")
         title.setWordWrap(True)
         info_layout.addWidget(title)
         
         if m.subtitle:
             subtitle = QLabel(m.subtitle)
-            subtitle.setStyleSheet("font-size: 16px; color: gray; font-style: italic;")
+            subtitle.setStyleSheet("font-size: 18px; color: #444; font-style: italic;")
             info_layout.addWidget(subtitle)
 
         # Action Buttons
@@ -181,6 +235,21 @@ class DetailView(QWidget):
         btn_layout.addStretch()
         info_layout.addLayout(btn_layout)
 
+        # Progression & Page Count
+        self.progression_label = QLabel("")
+        self.progression_label.setStyleSheet("font-size: 14px; color: #444;")
+        
+        total_pages = 0
+        if hasattr(m, 'numberOfPages') and m.numberOfPages:
+            total_pages = m.numberOfPages
+        elif pub.readingOrder:
+            total_pages = len(pub.readingOrder)
+            
+        if total_pages:
+            self.progression_label.setText(f"Pages: {total_pages}")
+            
+        info_layout.addWidget(self.progression_label)
+
         # Hotlinks / Credits
         role_map = {
             "author": "Author", "artist": "Artist", "penciler": "Penciler", 
@@ -193,16 +262,18 @@ class DetailView(QWidget):
                 self._add_clickable_metadata(info_layout, label, val, base_url)
 
         if m.published:
-            info_layout.addWidget(QLabel(f"<b>Published:</b> {m.published}"))
+            l = QLabel(f"<b>Published:</b> {m.published}")
+            l.setStyleSheet("color: #444;")
+            info_layout.addWidget(l)
         
         # Subjects
         if m.subject:
-            info_layout.addWidget(QLabel("<b>Subjects:</b>"))
-            subj_layout = QHBoxLayout()
-            subj_layout.setSpacing(5)
+            s_label = QLabel("<b>Subjects:</b>")
+            s_label.setStyleSheet("color: #444;")
+            info_layout.addWidget(s_label)
+            
             subj_widget = QWidget()
-            subj_widget.setLayout(subj_layout)
-            subj_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            subj_layout = FlowLayout(subj_widget, spacing=5)
             
             subjects = m.subject if isinstance(m.subject, list) else [m.subject]
             for s in subjects:
@@ -220,19 +291,21 @@ class DetailView(QWidget):
                     subj_layout.addWidget(badge)
                 else:
                     l = QLabel(name)
-                    l.setStyleSheet("background-color: #333; border-radius: 10px; padding: 2px 10px; font-size: 11px;")
+                    l.setStyleSheet("background-color: #ddd; color: #111; border-radius: 10px; padding: 2px 10px; font-size: 11px;")
                     subj_layout.addWidget(l)
             info_layout.addWidget(subj_widget)
 
         if m.description:
-            info_layout.addWidget(QLabel("<b>Summary:</b>"))
+            d_label = QLabel("<b>Summary:</b>")
+            d_label.setStyleSheet("color: #444;")
+            info_layout.addWidget(d_label)
             summary = QLabel(m.description)
             summary.setWordWrap(True)
-            summary.setStyleSheet("color: #ccc; font-size: 13px;")
+            summary.setStyleSheet("color: #444; font-size: 13px;")
             info_layout.addWidget(summary)
 
         info_layout.addStretch()
-        top_layout.addWidget(info_widget, 1)
+        top_layout.addWidget(info_widget)
         
         container = QWidget()
         container.setLayout(top_layout)
@@ -240,6 +313,19 @@ class DetailView(QWidget):
 
         # carousels
         self._add_carousels(pub, base_url)
+
+    def _clear_layout(self, layout):
+        if layout is None: return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            else:
+                sub_layout = item.layout()
+                if sub_layout:
+                    self._clear_layout(sub_layout)
+                    sub_layout.deleteLater()
 
     def _add_clickable_metadata(self, layout, label, contributors, base_url):
         items = contributors if isinstance(contributors, list) else [contributors]
@@ -249,11 +335,10 @@ class DetailView(QWidget):
         
         l_label = QLabel(f"<b>{label}:</b>")
         l_label.setFixedWidth(80)
+        l_label.setStyleSheet("color: #444;")
         row_layout.addWidget(l_label)
         
-        flow_layout = QHBoxLayout()
-        flow_layout.setSpacing(5)
-        flow_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        flow_layout = FlowLayout(spacing=5)
         
         for item in items:
             name = item.name if hasattr(item, 'name') else (item.get("name") if isinstance(item, dict) else str(item))
@@ -274,7 +359,9 @@ class DetailView(QWidget):
                 btn.clicked.connect(lambda _, u=full_href, t=name: self.on_navigate(u, t))
                 flow_layout.addWidget(btn)
             else:
-                flow_layout.addWidget(QLabel(name))
+                l = QLabel(name)
+                l.setStyleSheet("color: #111;")
+                flow_layout.addWidget(l)
         
         row_widget = QWidget()
         row_widget.setLayout(flow_layout)
@@ -355,6 +442,11 @@ class DetailView(QWidget):
 
     async def _load_cover(self, url: str, label: QLabel):
         asset_path = await self.image_manager.get_image_asset_path(url)
+        try:
+            if not label: return
+        except RuntimeError:
+            return
+
         if asset_path:
             from config import CACHE_DIR
             import hashlib
@@ -363,7 +455,10 @@ class DetailView(QWidget):
             if full_path.exists():
                 pixmap = QPixmap(str(full_path))
                 if not pixmap.isNull():
-                    label.setPixmap(pixmap)
+                    try:
+                        label.setPixmap(pixmap)
+                    except RuntimeError:
+                        pass
 
     def _get_image_url(self, pub: Publication) -> Optional[str]:
         if pub.images: return pub.images[0].href

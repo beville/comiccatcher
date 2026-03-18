@@ -147,7 +147,10 @@ class LocalLibraryView(QWidget):
             if cache_path.exists():
                 pixmap = QPixmap(str(cache_path))
                 if not pixmap.isNull():
-                    item.setIcon(QIcon(pixmap))
+                    try:
+                        item.setIcon(QIcon(pixmap))
+                    except RuntimeError:
+                        pass
 
         # Metadata subtitle (Enrich name)
         async with self._meta_sem:

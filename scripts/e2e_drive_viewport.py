@@ -1,82 +1,108 @@
 import sys
 import asyncio
-from pathlib import Path
-from PyQt6.QtWidgets import QApplication, QPushButton
-from PyQt6.QtTest import QTest
-from PyQt6.QtCore import Qt
+import math
+import os
+from unittest.mock import MagicMock, AsyncMock
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt, QSize
 from qasync import QEventLoop
 
+# Import the actual code
+from ui.views.browser import BrowserView
 from config import ConfigManager
-from ui.app_layout import MainWindow
+from models.opds import OPDSFeed, Metadata, Publication, Link
 
-async def drive_gui():
-    config_manager = ConfigManager()
-    config_manager.set_scroll_method("viewport")
+async def test_viewport_sequence():
+    app = QApplication.instance() or QApplication(sys.argv)
     
-    window = MainWindow(config_manager)
-    window.show()
-    browser = window.browser_view
+    # 1. Setup mocks
+    config = MagicMock(spec=ConfigManager)
+    config.get_scroll_method.return_value = "viewport"
     
-    if config_manager.profiles:
-        profile = config_manager.profiles[0]
-        print(f"Driving GUI for profile: {profile.name}")
-        window.on_profile_selected(profile)
-        await asyncio.sleep(2) 
-        
-        # Navigate to "Series" - look for the button in the dashboard
-        print("Action: Looking for Series link...")
-        series_btn = None
-        for i in range(browser.content_layout.count()):
-            w = browser.content_layout.itemAt(i).widget()
-            if w:
-                # Groups or nav buttons
-                btns = w.findChildren(QPushButton)
-                for b in btns:
-                    if "Series" in b.text():
-                        series_btn = b
-                        break
-            if series_btn: break
-            
-        if series_btn:
-            print(f"Clicking: {series_btn.text()}")
-            series_btn.click()
-            await asyncio.sleep(3) # Wait for Series feed
-        else:
-            print("Could not find Series link, staying on current.")
-
-        print(f"Feed Loaded: {browser.status_label.text()}")
-        print(f"Buffer size: {len(browser.items_buffer)}, Total items: {browser.total_items}, Items per screen: {browser.items_per_screen}")
-        print(f"Initial UI: {browser.viewport_paging_bar.label_status.text()}")
-        
-        browser.setFocus()
-        
-        # 2. Simulate Arrow Right (Next)
-        print("Action: Press Right Arrow")
-        QTest.keyClick(browser, Qt.Key.Key_Right)
-        await asyncio.sleep(1)
-        print(f"After Right: {browser.viewport_paging_bar.label_status.text()} (Offset: {browser.viewport_offset})")
-        
-        # 3. Simulate End (Jump to last)
-        print("Action: Press End Key")
-        QTest.keyClick(browser, Qt.Key.Key_End)
-        await asyncio.sleep(4) 
-        print(f"After End: {browser.viewport_paging_bar.label_status.text()} (Offset: {browser.viewport_offset}, Absolute: {browser.buffer_absolute_offset})")
-        
-        # 4. Simulate Arrow Left (Previous)
-        print("Action: Press Left Arrow")
-        QTest.keyClick(browser, Qt.Key.Key_Left)
-        await asyncio.sleep(1)
-        print(f"After Left: {browser.viewport_paging_bar.label_status.text()} (Offset: {browser.viewport_offset})")
-
+    # Fake callbacks
+    def on_detail(p, u): pass
+    def on_nav(u, t, **kwargs): pass
+    
+    view = BrowserView(config, on_detail, on_nav)
+    
+    # Setup API client mock
+    api_client = MagicMock()
+    api_client.profile.get_base_url.return_value = "http://fake"
+    view.api_client = api_client
+    view.opds_client = MagicMock()
+    
+    # Force viewport dimensions: 
+    # To get exactly 15 items per screen in PUB mode (275 per row, 175 per col)
+    # We need 3 rows (3*275 + 20 margin = 845) and 5 cols (5*175 + 20 margin = 895)
+    # Wait, user's log was 15x1. That's NAV mode.
+    # NAV mode: available_h // 45. 15 * 45 + 20 = 695.
+    
+    view.scroll.viewport().height = MagicMock(return_value=695)
+    view.scroll.viewport().width = MagicMock(return_value=1040)
+    
+    total_items = 3188
+    # No publications -> NAV mode
+    fake_nav = [Link(title=f"Nav {i}", href=f"href{i}") for i in range(100)]
+    
+    feed = OPDSFeed(
+        metadata=Metadata(title="Test Feed", numberOfItems=total_items, itemsPerPage=100, currentPage=1),
+        links=[],
+        navigation=fake_nav
+    )
+    
+    # Use AsyncMock for get_feed
+    view.opds_client.get_feed = AsyncMock(return_value=feed)
+    
+    print(f"--- Initializing Feed with {total_items} items ---")
+    await view.load_feed("http://fake", "Test")
+    
+    # Wait for logic to process
+    await asyncio.sleep(0.1)
+    
+    print(f"Initial Mode: {'PUB' if view.is_pub_mode else 'NAV'}")
+    print(f"Items/Screen: {view.items_per_screen}")
+    print(f"Initial State: {view.viewport_paging_bar.label_status.text()}")
+    
+    # 2. Simulate Jump to Last
+    print("\n--- Simulating Jump to Last ---")
+    view.last_url = "http://fake/last"
+    
+    # Page 32 starts at 3100.
+    last_nav = [Link(title=f"Nav {i}", href=f"href{i}") for i in range(3100, 3188)]
+    last_feed = OPDSFeed(
+        metadata=Metadata(title="Test Feed", numberOfItems=total_items, itemsPerPage=100, currentPage=32),
+        links=[],
+        navigation=last_nav
+    )
+    view.opds_client.get_feed = AsyncMock(return_value=last_feed)
+    
+    # Trigger the jump
+    await view._fetch_absolute_last()
+    
+    # Wait for UI settle logic
+    await asyncio.sleep(0.1)
+    
+    status = view.viewport_paging_bar.label_status.text()
+    actual_start = view.buffer_absolute_offset + view.viewport_offset
+    expected_scr = math.ceil(total_items / view.items_per_screen)
+    expected_start = ((total_items - 1) // view.items_per_screen) * view.items_per_screen
+    
+    print(f"Final State: {status}")
+    print(f"Effective Global Start: {actual_start}")
+    print(f"Expected Global Start: {expected_start}")
+    print(f"Expected Screen: {expected_scr}")
+    
+    # CHECK
+    if actual_start == expected_start and f"{expected_scr}" in status:
+        print("\nSUCCESS: Headless E2E math validation passed for 15 items/scr!")
     else:
-        print("No profiles found to test.")
-
-    print("Driving finished.")
-    QApplication.instance().quit()
+        print(f"\nFAILURE: Math mismatch! Expected {expected_start}, Got {actual_start}")
+        sys.exit(1)
+        
+    app.quit()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    loop = QEventLoop(app)
+    loop = QEventLoop(QApplication(sys.argv))
     asyncio.set_event_loop(loop)
     with loop:
-        loop.run_until_complete(drive_gui())
+        loop.run_until_complete(test_viewport_sequence())

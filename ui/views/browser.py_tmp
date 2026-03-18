@@ -1,0 +1,112 @@
+    async def load_feed(self, url: str, title: str = None, force_refresh: bool = False, initial_offset: int = 0):
+        self._load_token += 1
+        token = self._load_token
+        self._last_loaded_url = url
+        
+        self.progress.setVisible(True)
+        self.status_label.setText(f"Loading {title or 'Catalog'}...")
+        
+        # Clear existing content completely
+        self._clear_all_content()
+
+        try:
+            logger.debug(f"Fetching feed: {url}")
+            feed = await self.opds_client.get_feed(url, force_refresh=force_refresh)
+            if token != self._load_token: return
+            
+            logger.debug(f"Feed fetched: '{feed.metadata.title}'. Links: {len(feed.links or [])}, Groups: {len(feed.groups or [])}, Pubs: {len(feed.publications or [])}, Nav: {len(feed.navigation or [])}")
+            
+            self.status_label.setText(feed.metadata.title)
+            
+            method = self.config_manager.get_scroll_method()
+            self.paging_bar.setVisible(False)
+            self.refit_paging_bar.setVisible(False)
+            self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            
+            # Reset refit/continuous state
+            self.refit_offset = initial_offset
+            self.items_buffer = []
+            self.sparse_buffer = {}
+            # (Note: widgets cleared in _clear_all_content)
+            
+            # CRITICAL: Reset container sizing from continuous mode
+            self.content_container.setMinimumHeight(0)
+            self.content_container.setMaximumHeight(16777215)
+            self.content_container.setFixedWidth(16777215)
+            
+            self.is_loading_more = False
+            self._server_index_base = None
+            
+            # Unified update logic
+            self._update_after_fetch(feed, url, reset_offset=True)
+            
+            # Decide rendering mode
+            is_dashboard = any(bool(getattr(g, "publications", None)) for g in (feed.groups or []))
+            has_pubs = bool(feed.publications)
+            has_nav = bool(feed.navigation)
+            self.is_pub_mode = has_pubs
+            
+            if is_dashboard:
+                logger.debug("Rendering Dashboard")
+                self._render_dashboard(feed)
+            else:
+                if has_pubs:
+                    self.items_buffer.extend(feed.publications)
+                elif has_nav:
+                    self.items_buffer.extend([n for n in feed.navigation if n.title != "Start"])
+
+                if method == "refit":
+                    logger.debug("Rendering ReFit Mode")
+                    self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                    QTimer.singleShot(50, self._render_refit_screen)
+                elif method == "continuous":
+                    logger.debug("Rendering Continuous Mode")
+                    self._render_continuous_page(feed, append=False)
+                else: # paging
+                    logger.debug("Rendering Traditional Paging")
+                    has_paging = self.paging_bar.update_links(feed, url)
+                    self.refit_paging_bar.setVisible(False)
+                    if has_paging:
+                        self.paging_container.setVisible(True)
+                        self.paging_bar.setVisible(True)
+                    else:
+                        self.paging_container.setVisible(False)
+                        self.paging_bar.setVisible(False)
+                        
+                    if has_pubs:
+                        self._render_grid(feed.publications)
+                        if has_nav:
+                            self._render_navigation(feed.navigation, at_top=True)
+                    elif has_nav:
+                        self._render_navigation(feed.navigation)
+                    else:
+                        self.content_layout.addWidget(QLabel("This folder is empty."))
+                
+            self._setup_facets(feed)
+                
+        except Exception as e:
+            logger.error(f"Feed error: {e}\n{traceback.format_exc()}")
+            self.content_layout.addWidget(QLabel(f"Error loading feed: {e}"))
+        finally:
+            if token == self._load_token:
+                self.progress.setVisible(False)
+
+    def _clear_all_content(self):
+        # 1. Clear layout
+        while self.content_layout.count():
+            item = self.content_layout.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+        
+        # 2. Clear absolute positioned widgets
+        for w in list(self._rendered_widgets.values()):
+            w.hide()
+            w.deleteLater()
+        self._rendered_widgets = {}
+        
+        # 3. Final safety: check for any orphans on the container
+        for child in list(self.content_container.children()):
+            if isinstance(child, QWidget) and child != self.content_layout:
+                child.hide()
+                child.deleteLater()

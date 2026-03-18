@@ -94,10 +94,7 @@ class LocalComicDetailView(QWidget):
         self.btn_read.setEnabled(is_cbz)
         
         # Clear existing meta
-        for i in reversed(range(self.meta_layout.count())): 
-            item = self.meta_layout.itemAt(i)
-            if item.widget():
-                item.widget().setParent(None)
+        self._clear_layout(self.meta_layout)
         
         self.cover_label.clear()
         
@@ -105,6 +102,19 @@ class LocalComicDetailView(QWidget):
         asyncio.create_task(self._load_meta(self._path))
         if is_cbz:
             asyncio.create_task(self._load_cover(self._path))
+
+    def _clear_layout(self, layout):
+        if layout is None: return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            else:
+                sub_layout = item.layout()
+                if sub_layout:
+                    self._clear_layout(sub_layout)
+                    sub_layout.deleteLater()
 
     async def _load_meta(self, path: Path):
         try:
@@ -133,11 +143,17 @@ class LocalComicDetailView(QWidget):
         if cache_path.exists() and path == self._path:
             pixmap = QPixmap(str(cache_path))
             if not pixmap.isNull():
-                self.cover_label.setPixmap(pixmap)
+                try:
+                    self.cover_label.setPixmap(pixmap)
+                except RuntimeError:
+                    pass
 
     def _render_meta(self, meta: Dict[str, Any]):
         # Clear stretch
-        self.meta_layout.takeAt(self.meta_layout.count()-1)
+        if self.meta_layout.count() > 0:
+            item = self.meta_layout.itemAt(self.meta_layout.count()-1)
+            if not item.widget():
+                self.meta_layout.takeAt(self.meta_layout.count()-1)
 
         def add_row(label, value):
             if not value: return

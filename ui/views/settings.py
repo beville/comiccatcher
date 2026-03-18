@@ -22,23 +22,23 @@ class SettingsView(QWidget):
         self.method_group = QGroupBox("Browsing Method")
         self.method_layout = QVBoxLayout(self.method_group)
         
-        self.radio_infinite = QRadioButton("Infinite Scroll (Sequential)")
+        self.radio_continuous = QRadioButton("Continuous Mode (Sequential)")
         self.radio_paging = QRadioButton("Traditional Paging (Standard Buttons)")
-        self.radio_viewport = QRadioButton("Viewport Paging (Fit to Window)")
+        self.radio_refit = QRadioButton("ReFit Mode (Fixed height, fast)")
         
-        self.method_layout.addWidget(self.radio_infinite)
+        self.method_layout.addWidget(self.radio_continuous)
         self.method_layout.addWidget(self.radio_paging)
-        self.method_layout.addWidget(self.radio_viewport)
+        self.method_layout.addWidget(self.radio_refit)
         
         # Set initial value
         method = self.config_manager.get_scroll_method()
-        if method == "infinite": self.radio_infinite.setChecked(True)
+        if method == "continuous": self.radio_continuous.setChecked(True)
         elif method == "paging": self.radio_paging.setChecked(True)
-        elif method == "viewport": self.radio_viewport.setChecked(True)
+        elif method == "refit": self.radio_refit.setChecked(True)
         
-        self.radio_infinite.toggled.connect(lambda: self._on_method_changed("infinite"))
+        self.radio_continuous.toggled.connect(lambda: self._on_method_changed("continuous"))
         self.radio_paging.toggled.connect(lambda: self._on_method_changed("paging"))
-        self.radio_viewport.toggled.connect(lambda: self._on_method_changed("viewport"))
+        self.radio_refit.toggled.connect(lambda: self._on_method_changed("refit"))
         
         self.layout.addWidget(self.method_group)
 

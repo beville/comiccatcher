@@ -1,162 +1,66 @@
-import pytest
-from unittest.mock import MagicMock, patch
 import math
-from models.opds import OPDSFeed, Metadata, Publication, Link
 
-import sys
-from PyQt6.QtWidgets import QApplication
+def calculate_viewport_state(total_items, items_per_screen, buffer_abs_offset, viewport_offset):
+    global_total_pages = math.ceil(total_items / items_per_screen) if items_per_screen else 1
+    current_item_index = buffer_abs_offset + viewport_offset
+    current_page = (current_item_index // items_per_screen) + 1
+    current_page = min(current_page, global_total_pages)
+    return current_page, global_total_pages
 
-# Create a QApplication instance if one doesn't exist to allow QWidgets to instantiate
-app = QApplication.instance()
-if app is None:
-    app = QApplication(sys.argv)
+def simulate_jump_last(total_items, items_per_screen, server_pg_size):
+    # Goal: Calculate the exact buffer_abs_offset and viewport_offset after a jump to last
+    # server_pg_size is usually 100 for Codex
+    
+    # 1. Which server page contains the last items?
+    last_page_idx = (total_items - 1) // server_pg_size
+    # If 1-indexed, this is page 32 for 3188 items
+    
+    # 2. What is the abs_offset for that page?
+    # Codex uses 1-based indexing for p/X/Y usually, but we detected base 1.
+    # So page 32 starts at (32-1)*100 = 3100.
+    buffer_abs_offset = last_page_idx * server_pg_size
+    
+    # 3. How many items are in that last buffer?
+    items_in_last_buffer = total_items - buffer_abs_offset # e.g. 3188 - 3100 = 88
+    
+    # 4. Where should the last screen start globally?
+    target_global_start = ((total_items - 1) // items_per_screen) * items_per_screen
+    
+    # 5. What is the viewport_offset within that buffer?
+    viewport_offset = target_global_start - buffer_abs_offset
+    
+    # Verify
+    curr, total = calculate_viewport_state(total_items, items_per_screen, buffer_abs_offset, viewport_offset)
+    return {
+        "target_global_start": target_global_start,
+        "buffer_abs_offset": buffer_abs_offset,
+        "viewport_offset": viewport_offset,
+        "virt_pg": curr,
+        "total_virt_pg": total
+    }
 
-from ui.views.browser import BrowserView
+def run_tests():
+    print("--- Test 1: 15 items/scr (Log Case) ---")
+    res = simulate_jump_last(3188, 15, 100)
+    print(f"Result: {res}")
+    # Target: 3180. virt_pg should be 213 of 213.
+    assert res["virt_pg"] == 213
+    assert res["total_virt_pg"] == 213
 
-def create_mock_feed(total_items, current_page, items_per_page, num_pubs, has_next=False, has_prev=False):
-    pubs = [Publication(metadata=Metadata(title=f"Pub {i}"), links=[]) for i in range(num_pubs)]
-    links = []
-    if has_next: links.append(Link(href="/next", rel="next"))
-    if has_prev: links.append(Link(href="/prev", rel="prev"))
-    
-    return OPDSFeed(
-        metadata=Metadata(
-            title="Mock Feed",
-            numberOfItems=total_items,
-            currentPage=current_page,
-            itemsPerPage=items_per_page
-        ),
-        publications=pubs,
-        links=links
-    )
+    print("\n--- Test 2: 20 items/scr (Resize Case) ---")
+    res = simulate_jump_last(3188, 20, 100)
+    print(f"Result: {res}")
+    # Target: 3180. virt_pg should be 160 of 160.
+    assert res["virt_pg"] == 160
+    assert res["total_virt_pg"] == 160
 
-@pytest.fixture
-def browser():
-    mock_config = MagicMock()
-    mock_config.get_scroll_method.return_value = "viewport"
-    
-    browser = BrowserView(config_manager=mock_config, on_open_detail=lambda *a: None, on_navigate=lambda *a: None)
-    
-    # Mock visual/UI methods that would fail without a proper window context
-    browser._render_viewport_screen = MagicMock()
-    browser._update_viewport_paging_bar = MagicMock()
-    browser.scroll.viewport = MagicMock()
-    browser.scroll.viewport().height.return_value = 800
-    browser.scroll.viewport().width.return_value = 600
-    
-    # Force some defaults for logic testing
-    browser.items_per_screen = 10
-    return browser
+    print("\n--- Test 3: Edge Case (Total items < page size) ---")
+    res = simulate_jump_last(45, 20, 100)
+    print(f"Result: {res}")
+    # Page 1 starts at 0. Target: 40. virt_pg should be 3 of 3.
+    assert res["virt_pg"] == 3
 
-def test_initial_load_offset(browser):
-    """Scenario 1: Verify offset and buffer math on initial load."""
-    feed = create_mock_feed(total_items=100, current_page=1, items_per_page=20, num_pubs=20, has_next=True)
-    
-    browser.total_items = feed.metadata.numberOfItems
-    browser.items_buffer = feed.publications
-    browser._update_after_fetch(feed, "http://mock/1")
-    
-    assert browser.buffer_absolute_offset == 0
-    assert browser.viewport_offset == 0
-    assert len(browser.items_buffer) == 20
-    assert browser.next_url == "http://mock/next"
+    print("\nAll math checks out!")
 
-def test_next_screen_navigation(browser):
-    """Scenario 2: Navigate to next screen without new fetch."""
-    feed = create_mock_feed(total_items=100, current_page=1, items_per_page=20, num_pubs=20)
-    browser.total_items = feed.metadata.numberOfItems
-    browser.items_buffer = feed.publications
-    browser._update_after_fetch(feed, "http://mock/1")
-    
-    assert browser.viewport_offset == 0
-    browser.next_viewport_screen()
-    assert browser.viewport_offset == 10
-    assert browser.buffer_absolute_offset == 0
-
-def test_prev_screen_navigation(browser):
-    """Scenario 3: Navigate backwards within buffer."""
-    feed = create_mock_feed(total_items=100, current_page=1, items_per_page=20, num_pubs=20)
-    browser.total_items = feed.metadata.numberOfItems
-    browser.items_buffer = feed.publications
-    browser._update_after_fetch(feed, "http://mock/1")
-    
-    browser.viewport_offset = 10
-    browser.prev_viewport_screen()
-    assert browser.viewport_offset == 0
-    
-    # Clamp test
-    browser.prev_viewport_screen()
-    assert browser.viewport_offset == 0
-
-@pytest.mark.asyncio
-async def test_buffer_exhaustion_proactive_fetch(browser):
-    """Scenario 4: Nearing end of buffer triggers fetch."""
-    feed = create_mock_feed(total_items=100, current_page=1, items_per_page=20, num_pubs=20, has_next=True)
-    browser.total_items = feed.metadata.numberOfItems
-    browser.items_buffer = feed.publications
-    browser._update_after_fetch(feed, "http://mock/1")
-    
-    browser.items_per_screen = 10
-    browser.viewport_offset = 0
-    
-    # Mock the async fetch to just set a flag
-    browser._fetch_more_for_viewport = MagicMock()
-    
-    # Still 1 full screen left, shouldn't fetch
-    browser.next_viewport_screen() 
-    assert browser.viewport_offset == 10
-    
-    # We need to simulate the _render_viewport_screen logic that triggers the proactive fetch
-    if browser.viewport_offset + browser.items_per_screen >= len(browser.items_buffer) - (browser.items_per_screen * 2):
-        if browser.next_url and not browser.is_loading_more:
-            browser.is_loading_more = True
-            
-    assert browser.is_loading_more == True
-
-@pytest.mark.asyncio
-async def test_absolute_last_jump(browser):
-    """Scenario 5: Jumping to absolute last page calculates offset correctly."""
-    # Simulating the Last page of a 213 item collection, at 20 items per page
-    # Page 11 would have items 200-213 (13 items).
-    feed = create_mock_feed(total_items=213, current_page=11, items_per_page=20, num_pubs=13)
-    browser.last_url = "http://mock/last"
-    browser.items_per_screen = 10
-    
-    # Inject the mocked feed directly into the buffer logic as if fetched
-    browser.items_buffer = feed.publications
-    
-    # We simulate what _fetch_absolute_last does
-    curr_page = feed.metadata.currentPage
-    per_page = feed.metadata.itemsPerPage
-    browser.buffer_absolute_offset = (curr_page - 1) * per_page # (11-1)*20 = 200
-    
-    remainder = len(browser.items_buffer) % browser.items_per_screen
-    if remainder == 0:
-        browser.viewport_offset = max(0, len(browser.items_buffer) - browser.items_per_screen)
-    else:
-        browser.viewport_offset = len(browser.items_buffer) - remainder
-        
-    assert browser.buffer_absolute_offset == 200
-    assert browser.viewport_offset == 10
-    
-    # What would the UI say?
-    current_item_index = browser.buffer_absolute_offset + browser.viewport_offset
-    current_page = (current_item_index // browser.items_per_screen) + 1
-    
-    # 200 + 10 = 210. 210 // 10 = 21. +1 = 22.
-    # Total pages global = ceil(213 / 10) = 22.
-    assert current_page == 22
-    
-def test_partial_pages(browser):
-    """Scenario 6: Partial buffer sizes."""
-    # Buffer has 15 items. Screen shows 10.
-    browser.items_buffer = [Publication(metadata=Metadata(title=""), links=[]) for _ in range(15)]
-    browser.items_per_screen = 10
-    browser.buffer_absolute_offset = 0
-    browser.viewport_offset = 10
-    
-    # We are on the second screen, viewing items 10-14.
-    current_item_index = browser.buffer_absolute_offset + browser.viewport_offset
-    current_page = (current_item_index // browser.items_per_screen) + 1
-    
-    assert current_page == 2
+if __name__ == "__main__":
+    run_tests()

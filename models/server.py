@@ -1,5 +1,5 @@
-from typing import Optional
-from pydantic import BaseModel, HttpUrl
+from typing import Optional, List
+from pydantic import BaseModel, HttpUrl, Field
 
 class ServerProfile(BaseModel):
     id: str
@@ -9,6 +9,9 @@ class ServerProfile(BaseModel):
     password: Optional[str] = None
     bearer_token: Optional[str] = None
     icon_url: Optional[str] = None
+    
+    search_history: List[str] = Field(default_factory=list)
+    pinned_searches: List[str] = Field(default_factory=list)
 
     def get_base_url(self) -> str:
         return self.url.rstrip('/')

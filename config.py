@@ -34,7 +34,7 @@ class ConfigManager:
     def __init__(self):
         self.profiles: List[ServerProfile] = []
         self.settings = {
-            "scroll_method": "infinite",  # "infinite", "paging", or "viewport"
+            "scroll_method": "continuous",  # "continuous", "paging", or "refit"
             # Local library folder (downloaded / imported comics).
             "library_dir": str(DEFAULT_LIBRARY_DIR),
         }
@@ -75,6 +75,12 @@ class ConfigManager:
         except Exception as e:
             print(f"Error saving profiles: {e}")
 
+    def get_device_id(self) -> str:
+        if "device_id" not in self.settings:
+            self.settings["device_id"] = str(uuid.uuid4())
+            self.save_settings()
+        return self.settings["device_id"]
+
     def load_settings(self):
         if not SETTINGS_FILE.exists():
             return
@@ -93,7 +99,7 @@ class ConfigManager:
             print(f"Error saving settings: {e}")
 
     def get_scroll_method(self) -> str:
-        return self.settings.get("scroll_method", "infinite")
+        return self.settings.get("scroll_method", "continuous")
 
     def set_scroll_method(self, method: str):
         self.settings["scroll_method"] = method
