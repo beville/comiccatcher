@@ -22,7 +22,7 @@ class BaseDetailView(QWidget):
         self.layout.setContentsMargins(10, 10, 10, 10)
         self.layout.setSpacing(0)
 
-        # Header (Simple Back button)
+        # Header (Redundant since MainWindow has a unified header)
         self.header = QHBoxLayout()
         self.btn_back = QPushButton()
         self.btn_back.setProperty("flat", "true")
@@ -31,9 +31,12 @@ class BaseDetailView(QWidget):
         self.btn_back.setFixedSize(32, 32)
         self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_back.clicked.connect(self.on_back)
+        self.btn_back.setVisible(False) # Now hidden
         self.header.addWidget(self.btn_back)
         self.header.addStretch()
+        # We keep the layout but hide its contents or use 0 height
         self.layout.addLayout(self.header)
+        self.header.setContentsMargins(0, 0, 0, 0)
 
         # Progress bar (loading state)
         self.progress = QProgressBar()

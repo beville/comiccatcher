@@ -293,6 +293,7 @@ class SeriesSection(QWidget):
 class LocalLibraryView(QWidget):
     scan_progress_signal = pyqtSignal(int, int, str)
     scan_finished_signal = pyqtSignal(bool)
+    nav_changed = pyqtSignal()
 
     def __init__(
         self,
@@ -342,6 +343,7 @@ class LocalLibraryView(QWidget):
         self.btn_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_up.clicked.connect(self._go_up)
         self.btn_up.setToolTip("Go up one folder")
+        self.btn_up.setVisible(False) # Now hidden
         
         self.btn_refresh = QPushButton()
         self.btn_refresh.setProperty("flat", "true")
@@ -385,15 +387,25 @@ class LocalLibraryView(QWidget):
         
         self.btn_view_options.setMenu(self.view_menu)
 
+        self.path_breadcrumb = QWidget()
+        self.path_layout = QHBoxLayout(self.path_breadcrumb)
+        self.path_layout.setContentsMargins(0, 0, 0, 0)
+        self.path_layout.setSpacing(5)
+        
+        self.lib_icon_label = QLabel()
+        self.lib_icon_label.setPixmap(ThemeManager.get_icon("library").pixmap(18, 18))
+        self.path_layout.addWidget(self.lib_icon_label)
+        
         self.path_label = QLabel("")
         self.path_label.setObjectName("path_label")
+        self.path_layout.addWidget(self.path_label, 1)
         
         self.btn_select = QPushButton("Select")
         self.btn_select.setCheckable(True)
         self.btn_select.clicked.connect(self.toggle_selection_mode)
         
         self.header_layout.addWidget(self.btn_up)
-        self.header_layout.addWidget(self.path_label, 1)
+        self.header_layout.addWidget(self.path_breadcrumb, 1)
         self.header_layout.addWidget(self.btn_select)
         self.header_layout.addWidget(self.btn_refresh)
         self.header_layout.addWidget(self.btn_view_options)
@@ -642,6 +654,7 @@ class LocalLibraryView(QWidget):
         stack_idx = stack_map.get(index, 0)
         self.stack.setCurrentIndex(stack_idx)
         self.btn_up.setVisible(stack_idx == 0) # Only show 'Up' in Folder mode
+        self.nav_changed.emit()
         self._reload_current_view()
 
     @pyqtSlot()
@@ -674,6 +687,7 @@ class LocalLibraryView(QWidget):
         self.btn_up.setIcon(ThemeManager.get_icon("back"))
         self.btn_refresh.setIcon(ThemeManager.get_icon("refresh"))
         self.btn_view_options.setIcon(ThemeManager.get_icon("settings"))
+        self.lib_icon_label.setPixmap(ThemeManager.get_icon("library").pixmap(18, 18))
 
     def set_dirty(self):
         self._is_dirty = True
@@ -701,7 +715,9 @@ class LocalLibraryView(QWidget):
         self._reload_current_view()
 
     async def _load_dir(self, path: Path):
-        self.path_label.setText(f"Folder: {path}")
+        self.current_dir = path
+        self.nav_changed.emit()
+        self.path_label.setText(f"> {path}")
 
         # Fetch data FIRST
         entries = await asyncio.to_thread(_list_dir, path)
@@ -737,7 +753,7 @@ class LocalLibraryView(QWidget):
             self.list_widget.setUpdatesEnabled(True)
 
     async def _load_grouped(self, field="series"):
-        self.path_label.setText(f"Library > Grouped by {field.replace('_', ' ').capitalize()}")
+        self.path_label.setText(f"> Grouped by {field.replace('_', ' ').capitalize()}")
         
         # 1. Fetch data from DB FIRST (this might take a few ms)
         # We do this before clearing or suspending updates to avoid a blank screen.
@@ -805,7 +821,7 @@ class LocalLibraryView(QWidget):
             self.setUpdatesEnabled(True)
 
     async def _load_alphabetical(self):
-        self.path_label.setText("Library > Alphabetical")
+        self.path_label.setText("> Alphabetical")
         
         # 1. Fetch data FIRST
         rows = await asyncio.to_thread(self.db.get_all_comics_alphabetical)
@@ -884,12 +900,27 @@ class LocalLibraryView(QWidget):
         if path.exists():
             self.on_open_comic(path)
 
-    def _go_up(self):
+    @property
+    def is_at_root(self):
         try:
-            if self.current_dir == self.root_dir:
-                return
+            # If we're not in the Folder view (index 0), we're in a global view (Series/Alpha)
+            # which are inherently "root" views.
+            if self.stack.currentIndex() != 0:
+                return True
+            
+            if not self.current_dir or not self.root_dir: return True
+            self.current_dir.relative_to(self.root_dir)
+            return self.current_dir == self.root_dir
+        except Exception:
+            return True
+
+    def go_up(self):
+        try:
+            if self.is_at_root: return
             parent = self.current_dir.parent
-            parent.relative_to(self.root_dir)
             asyncio.create_task(self._load_dir(parent))
         except Exception:
             pass
+
+    def _go_up(self):
+        self.go_up()

@@ -173,9 +173,30 @@ class MainWindow(QMainWindow):
 
         # Row 1: Feed Info & Tabs & Downloads
         self.feed_info_row = QHBoxLayout()
-        self.feed_icon_label = QLabel()
-        self.feed_name_label = QLabel("No Feed Selected")
-        self.feed_name_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.btn_back_header = QPushButton("Back")
+        self.btn_back_header.setIcon(ThemeManager.get_icon("back"))
+        self.btn_back_header.setIconSize(QSize(18, 18))
+        self.btn_back_header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back_header.setToolTip("Go back")
+        self.btn_back_header.clicked.connect(self._on_header_back_clicked)
+        self.btn_back_header.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-weight: bold;
+                font-size: 13px;
+                text-align: left;
+            }
+            QPushButton:hover {
+                background-color: rgba(128, 128, 128, 30);
+                border-color: rgba(128, 128, 128, 50);
+            }
+            QPushButton:disabled {
+                color: rgba(128, 128, 128, 100);
+            }
+        """)
         
         self.btn_tab_feed = QPushButton("Browse")
         self.btn_tab_feed.setObjectName("tab_button")
@@ -192,9 +213,8 @@ class MainWindow(QMainWindow):
         self.btn_tab_search.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_search.clicked.connect(lambda: self._on_tab_clicked("search"))
         
-        self.feed_info_row.addWidget(self.feed_icon_label)
-        self.feed_info_row.addWidget(self.feed_name_label)
-        self.feed_info_row.addSpacing(20)
+        self.feed_info_row.addWidget(self.btn_back_header)
+        self.feed_info_row.addSpacing(10)
         self.feed_info_row.addWidget(self.btn_tab_feed)
         self.feed_info_row.addWidget(self.btn_tab_search)
         
@@ -267,6 +287,7 @@ class MainWindow(QMainWindow):
         )
         
         self.local_library_view = LocalLibraryView(self.config_manager, self.on_open_local_comic, self.local_db)
+        self.local_library_view.nav_changed.connect(self.update_header)
         self.local_detail_view = LocalComicDetailView(self.on_back_to_local_library, self.on_read_local_comic, self.local_db)
         self.local_reader_view = LocalReaderView(self.on_exit_reader, self.local_db)
         
@@ -327,6 +348,7 @@ class MainWindow(QMainWindow):
                 item.setIcon(ThemeManager.get_icon(icon_name))
         self.btn_refresh.setIcon(ThemeManager.get_icon("refresh"))
         self.btn_downloads.setIcon(ThemeManager.get_icon("download"))
+        self.btn_back_header.setIcon(ThemeManager.get_icon("back"))
         self.local_library_view.refresh_icons()
         self.settings_view.feed_management.refresh_feeds()
 
@@ -368,7 +390,23 @@ class MainWindow(QMainWindow):
 
     def _on_feed_icon_loaded(self, feed_id, pixmap):
         if self.api_client and self.api_client.profile.id == feed_id:
-            self.feed_icon_label.setPixmap(pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            setattr(self.api_client.profile, "_cached_icon", pixmap)
+            self.update_header()
+
+    def _on_header_back_clicked(self):
+        current_view_idx = self.content_stack.currentIndex()
+        if current_view_idx == 4: # Local Detail
+            self.on_back_to_local_library()
+            return
+        if current_view_idx == 1: # Library (Folder Up)
+            self.local_library_view.go_up()
+            return
+
+        hist, idx = self.get_current_history()
+        if idx > 0:
+            self.on_jump_to_history(idx - 1)
+        else:
+            self.back_to_feed_list()
 
     def get_current_history(self):
         if self.active_tab == "search":
@@ -484,10 +522,15 @@ class MainWindow(QMainWindow):
 
         # Determine if we are in a "Feed Context" (Browsing or searching a feed)
         in_feed_context = current_view_idx in (3, 6, 8, 9)
+
+        # Determine if we are in a "Back-enabled Context" 
+        # (Feed browser, Search browser, Detail views, or Library subfolder)
+        in_back_context = (current_view_idx in (3, 4, 6, 8, 9)) or \
+                         (current_view_idx == 1 and not self.local_library_view.is_at_root)
         
-        # Toggle visibility of feed-specific header parts
-        self.feed_icon_label.setVisible(in_feed_context)
-        self.feed_name_label.setVisible(in_feed_context)
+        # Toggle visibility of header parts
+        self.btn_back_header.setVisible(show_header and in_back_context)
+        self.btn_back_header.setEnabled(in_back_context)
         self.btn_tab_feed.setVisible(in_feed_context)
         self.btn_tab_search.setVisible(in_feed_context)
         self.breadcrumb_container.setVisible(in_feed_context)
@@ -498,21 +541,43 @@ class MainWindow(QMainWindow):
         style = QApplication.instance().style()
 
         # Build breadcrumbs (only in feed context)
-        # Root "Feeds" link (Icon only)
-        btn_root = QPushButton()
-        btn_root.setIcon(ThemeManager.get_icon("feeds"))
-        btn_root.setFlat(True)
-        btn_root.setFixedSize(24, 24)
-        btn_root.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_root.setObjectName("breadcrumb_dim")
-        btn_root.setToolTip("Back to Feeds")
-        btn_root.clicked.connect(self.back_to_feed_list)
-        self.breadcrumb_items_layout.addWidget(btn_root)
-        
-        sep = QLabel(">")
-        sep.setObjectName("breadcrumb_sep")
-        self.breadcrumb_items_layout.addWidget(sep)
+        # 1. Feed Icon & Name (Merged with history start)
+        if self.api_client:
+            feed = self.api_client.profile
+            feed_breadcrumb = QWidget()
+            fb_layout = QHBoxLayout(feed_breadcrumb)
+            fb_layout.setContentsMargins(0, 0, 0, 0)
+            fb_layout.setSpacing(5)
+            
+            icon_label = QLabel()
+            icon_pixmap = getattr(feed, "_cached_icon", None)
+            if icon_pixmap:
+                icon_label.setPixmap(icon_pixmap.scaled(18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                icon_label.setPixmap(ThemeManager.get_icon("feeds").pixmap(18, 18))
+            fb_layout.addWidget(icon_label)
+            
+            if idx == 0:
+                # Inert label if on the feed start
+                label_feed = QLabel(feed.name)
+                label_feed.setObjectName("breadcrumb_active")
+                fb_layout.addWidget(label_feed)
+            else:
+                # Clickable button if deeper in history
+                btn_feed = QPushButton(feed.name)
+                btn_feed.setFlat(True)
+                btn_feed.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn_feed.setObjectName("breadcrumb_dim")
+                btn_feed.clicked.connect(lambda: self.on_jump_to_history(0))
+                btn_feed.setToolTip(f"Back to {feed.name} Start")
+                fb_layout.addWidget(btn_feed)
+            
+            self.breadcrumb_items_layout.addWidget(feed_breadcrumb)
+            
+            # Note: NO separator here yet, as the history index 0 (Home/Search icon) follows immediately
+            # making it look like part of the feed identity.
 
+        # 2. History steps
         for i, entry in enumerate(hist):
             title = entry.get("title", "...")
             item_widget = QWidget()
@@ -521,18 +586,21 @@ class MainWindow(QMainWindow):
             item_layout.setSpacing(5)
             
             if i == 0:
-                icon = ThemeManager.get_icon("library") if self.active_tab == "feed" else ThemeManager.get_icon("search")
+                icon_name = "home" if self.active_tab == "feed" else "search"
+                icon = ThemeManager.get_icon(icon_name)
                 if i == idx:
                     icon_label = QLabel()
-                    icon_label.setPixmap(icon.pixmap(16, 16))
+                    icon_label.setPixmap(icon.pixmap(18, 18))
                     item_layout.addWidget(icon_label)
                 else:
                     btn = QPushButton()
                     btn.setIcon(icon)
+                    btn.setIconSize(QSize(18, 18))
                     btn.setFlat(True)
-                    btn.setFixedSize(20, 20)
+                    btn.setFixedSize(24, 24)
                     btn.setCursor(Qt.CursorShape.PointingHandCursor)
                     btn.clicked.connect(lambda _, x=i: self.on_jump_to_history(x))
+                    btn.setToolTip(f"Jump back to {title}")
                     item_layout.addWidget(btn)
             else:
                 if i == idx:
@@ -565,8 +633,6 @@ class MainWindow(QMainWindow):
         self.feed_index = -1
         self.search_history = []
         self.search_index = -1
-        self.feed_name_label.setText("No Feed Selected")
-        self.feed_icon_label.clear()
         self.content_stack.setCurrentIndex(0)
         self.update_header()
 
@@ -595,14 +661,6 @@ class MainWindow(QMainWindow):
         self.active_tab = "feed"
         
         self.search_root_view.update_data(feed.search_history, feed.pinned_searches)
-        self.feed_name_label.setText(feed.name)
-        
-        # Check if icon is cached on the feed profile
-        icon_pixmap = getattr(feed, "_cached_icon", None)
-        if icon_pixmap:
-            self.feed_icon_label.setPixmap(icon_pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-        else:
-            self.feed_icon_label.setPixmap(ThemeManager.get_icon("feeds").pixmap(24, 24))
         
         asyncio.create_task(self.feed_browser_view.load_feed(start_url, "Home"))
         self.content_stack.setCurrentIndex(3)
