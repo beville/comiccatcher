@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, 
     QGroupBox, QListWidget, QListWidgetItem, QStyle, QApplication
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from ui.theme_manager import ThemeManager
 
 class SearchItemWidget(QWidget):
@@ -15,9 +15,11 @@ class SearchItemWidget(QWidget):
         super().__init__()
         self.text = text
         self.is_pinned = is_pinned
+        self.setFixedHeight(36)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 5, 2)
-        layout.setSpacing(5)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Main Label
         self.label = QLabel(text)
@@ -29,9 +31,10 @@ class SearchItemWidget(QWidget):
 
         # Pin Button (Star) - Only show in history, not in pinned list itself
         self.btn_pin = QPushButton("★")
+        self.btn_pin.setObjectName("pin_button")
         self.btn_pin.setFlat(True)
-        self.btn_pin.setFixedSize(20, 20)
-        self.btn_pin.setStyleSheet("color: #ffd700; font-size: 14px; border: none;")
+        self.btn_pin.setFixedSize(24, 24)
+        self.btn_pin.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_pin.setToolTip("Pin to favorites")
         self.btn_pin.clicked.connect(lambda: self.pin_requested.emit(self.text))
         self.btn_pin.setVisible(not is_pinned)
@@ -40,8 +43,9 @@ class SearchItemWidget(QWidget):
         # Remove Button
         self.btn_remove = QPushButton()
         self.btn_remove.setFlat(True)
-        self.btn_remove.setFixedSize(20, 20)
+        self.btn_remove.setFixedSize(24, 24)
         self.btn_remove.setIcon(ThemeManager.get_icon("close"))
+        self.btn_remove.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_remove.setToolTip("Remove")
         self.btn_remove.clicked.connect(lambda: self.remove_requested.emit(self.text, self.is_pinned))
         layout.addWidget(self.btn_remove)
@@ -95,6 +99,7 @@ class SearchRootView(QWidget):
         recent_vbox = QVBoxLayout(recent_group)
         
         self.recent_list = QListWidget()
+        self.recent_list.setObjectName("search_list")
         recent_vbox.addWidget(self.recent_list)
         
         self.btn_clear = QPushButton("Clear History")
@@ -109,6 +114,7 @@ class SearchRootView(QWidget):
         pinned_vbox = QVBoxLayout(pinned_group)
         
         self.pinned_list = QListWidget()
+        self.pinned_list.setObjectName("search_list")
         pinned_vbox.addWidget(self.pinned_list)
         
         h_layout.addWidget(recent_group, 1)
@@ -124,7 +130,9 @@ class SearchRootView(QWidget):
             widget.clicked.connect(self._do_search_query)
             widget.pin_requested.connect(self.on_pin)
             widget.remove_requested.connect(self.on_remove)
-            item.setSizeHint(widget.sizeHint())
+            
+            # Use fixed size hint to ensure layout consistency
+            item.setSizeHint(QSize(0, 36))
             self.recent_list.addItem(item)
             self.recent_list.setItemWidget(item, widget)
 
@@ -135,7 +143,9 @@ class SearchRootView(QWidget):
             widget.clicked.connect(self._do_search_query)
             widget.pin_requested.connect(self.on_pin) # Will act as Unpin
             widget.remove_requested.connect(self.on_remove)
-            item.setSizeHint(widget.sizeHint())
+            
+            # Use fixed size hint to ensure layout consistency
+            item.setSizeHint(QSize(0, 36))
             self.pinned_list.addItem(item)
             self.pinned_list.setItemWidget(item, widget)
             

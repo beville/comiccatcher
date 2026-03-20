@@ -105,7 +105,7 @@ class PagingBar(QFrame):
         self.setFixedHeight(45)
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(10, 0, 10, 0)
-        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter) # Center the bar
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignLeft) # Left-justify the bar
         
         self.btn_first = QPushButton("<<")
         self.btn_prev = QPushButton("<")

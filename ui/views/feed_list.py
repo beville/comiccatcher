@@ -65,6 +65,7 @@ class FeedListView(QWidget):
         self.feeds_list.clear()
         for f in self.config_manager.feeds:
             item = QListWidgetItem(f"{f.name}\n{f.url}")
+            item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             item.setData(Qt.ItemDataRole.UserRole, f)
             item.setIcon(default_icon)
             self.feeds_list.addItem(item)

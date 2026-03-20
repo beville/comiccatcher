@@ -66,25 +66,23 @@ class SettingsView(QWidget):
 
         # Browsing Method
         self.method_group = QGroupBox("Browsing Method")
-        self.method_layout = QVBoxLayout(self.method_group)
+        self.method_layout = QHBoxLayout(self.method_group)
         
-        self.radio_continuous = QRadioButton("Continuous Mode (Sequential)")
-        self.radio_paging = QRadioButton("Traditional Paging (Standard Buttons)")
-        self.radio_refit = QRadioButton("ReFit Mode (Fixed height, fast)")
+        self.method_combo = QComboBox()
+        self.method_combo.addItem("Continuous Mode (Sequential)", "continuous")
+        self.method_combo.addItem("Traditional Paging (Standard Buttons)", "paging")
+        self.method_combo.addItem("ReFit Mode (Fixed height, fast)", "refit")
         
-        self.method_layout.addWidget(self.radio_continuous)
-        self.method_layout.addWidget(self.radio_paging)
-        self.method_layout.addWidget(self.radio_refit)
+        current_method = self.config_manager.get_scroll_method()
+        idx = self.method_combo.findData(current_method)
+        if idx >= 0:
+            self.method_combo.setCurrentIndex(idx)
+            
+        self.method_combo.currentIndexChanged.connect(self._on_method_combo_changed)
         
-        # Set initial value
-        method = self.config_manager.get_scroll_method()
-        if method == "continuous": self.radio_continuous.setChecked(True)
-        elif method == "paging": self.radio_paging.setChecked(True)
-        elif method == "refit": self.radio_refit.setChecked(True)
-        
-        self.radio_continuous.toggled.connect(lambda: self._on_method_changed("continuous"))
-        self.radio_paging.toggled.connect(lambda: self._on_method_changed("paging"))
-        self.radio_refit.toggled.connect(lambda: self._on_method_changed("refit"))
+        self.method_layout.addWidget(QLabel("Select Mode: "))
+        self.method_layout.addWidget(self.method_combo)
+        self.method_layout.addStretch()
         
         self.layout.addWidget(self.method_group)
 
@@ -147,10 +145,9 @@ class SettingsView(QWidget):
         self.config_manager.set_theme(theme)
         self.theme_changed.emit()
 
-    def _on_method_changed(self, method):
-        # Radio button toggle emits for both uncheck and check
-        if self.sender().isChecked():
-            self.config_manager.set_scroll_method(method)
+    def _on_method_combo_changed(self, index):
+        method = self.method_combo.itemData(index)
+        self.config_manager.set_scroll_method(method)
 
     def _on_browse_clicked(self):
         path = QFileDialog.getExistingDirectory(self, "Select Library Directory", self.library_path_input.text())

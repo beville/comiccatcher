@@ -25,7 +25,7 @@ THEMES = {
         "bg_item_hover": "#3e3e42",
         "bg_item_selected": "#264f78",
         "text_main": "#e1e1e1",
-        "text_dim": "#969696",
+        "text_dim": "#a0a0a0",
         "accent": "#007fd4",
         "border": "#333333",
         "card_bg": "#252526"
@@ -37,7 +37,7 @@ THEMES = {
         "bg_item_hover": "#1a1a1a",
         "bg_item_selected": "#007fd4",
         "text_main": "#ffffff",
-        "text_dim": "#aaaaaa",
+        "text_dim": "#bbbbbb",
         "accent": "#007fd4",
         "border": "#404040",
         "card_bg": "#000000"
@@ -279,6 +279,31 @@ class ThemeManager:
                 text-decoration: underline;
             }}
             
+            QListWidget#nav_list {{
+                background-color: {theme['bg_sidebar']};
+                color: {theme['text_main']};
+                border: none;
+            }}
+            
+            QListWidget#nav_list::item {{
+                color: {theme['text_main']};
+                padding: 10px;
+                border-radius: 0px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+            
+            QListWidget#nav_list::item:selected {{
+                background-color: {theme['bg_item_hover']};
+                color: {theme['accent']};
+                border-left: 3px solid {theme['accent']};
+            }}
+
+            QListWidget#search_list::item {{
+                padding: 0px;
+                border-radius: 4px;
+            }}
+
             QLabel#breadcrumb_sep {{
                 color: {theme['border']};
                 font-weight: bold;
@@ -309,7 +334,28 @@ class ThemeManager:
                 color: {theme['text_dim']};
                 border: none;
             }}
-        """
+
+            QPushButton#section_toggle, QPushButton#nav_link_button, QPushButton#nav_continuous_button {{
+                text-align: left;
+                padding-left: 10px;
+                font-weight: bold;
+                color: {theme['accent']};
+                border: none;
+                background-color: transparent;
+            }}
+
+            QPushButton#pin_button {{
+                color: #ffd700;
+                font-size: 16px;
+                background-color: transparent;
+                border: none;
+            }}
+
+            QPushButton#nav_link_button:hover, QPushButton#nav_continuous_button:hover {{
+                background-color: {theme['bg_item_hover']};
+                border-radius: 4px;
+            }}
+            """
         app.setStyleSheet(stylesheet)
         
         # Also set palette for some native widgets

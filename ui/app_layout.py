@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
         # Sidebar (Narrower, Icons + Text Underneath)
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setFixedWidth(70)
+        self.sidebar.setFixedWidth(85)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
         self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
         self.sidebar_layout.setSpacing(0)
@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         def add_nav_item(text, icon_name):
             item = QListWidgetItem(text)
             item.setIcon(ThemeManager.get_icon(icon_name))
-            item.setSizeHint(QSize(70, 85))
+            item.setSizeHint(QSize(85, 85))
             item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.nav_list.addItem(item)
 
@@ -179,6 +179,7 @@ class MainWindow(QMainWindow):
         
         self.btn_tab_feed = QPushButton("Browse")
         self.btn_tab_feed.setObjectName("tab_button")
+        self.btn_tab_feed.setIcon(ThemeManager.get_icon("home"))
         self.btn_tab_feed.setCheckable(True)
         self.btn_tab_feed.setChecked(True)
         self.btn_tab_feed.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -186,6 +187,7 @@ class MainWindow(QMainWindow):
 
         self.btn_tab_search = QPushButton("Search")
         self.btn_tab_search.setObjectName("tab_button")
+        self.btn_tab_search.setIcon(ThemeManager.get_icon("search"))
         self.btn_tab_search.setCheckable(True)
         self.btn_tab_search.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_search.clicked.connect(lambda: self._on_tab_clicked("search"))
@@ -492,11 +494,14 @@ class MainWindow(QMainWindow):
         style = QApplication.instance().style()
 
         # Build breadcrumbs (only in feed context)
-        # Root "Feeds" link
-        btn_root = QPushButton("Feeds")
+        # Root "Feeds" link (Icon only)
+        btn_root = QPushButton()
+        btn_root.setIcon(ThemeManager.get_icon("feeds"))
         btn_root.setFlat(True)
+        btn_root.setFixedSize(24, 24)
         btn_root.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_root.setObjectName("breadcrumb_dim")
+        btn_root.setToolTip("Back to Feeds")
         btn_root.clicked.connect(self.back_to_feed_list)
         self.breadcrumb_items_layout.addWidget(btn_root)
         
@@ -512,7 +517,7 @@ class MainWindow(QMainWindow):
             item_layout.setSpacing(5)
             
             if i == 0:
-                icon = ThemeManager.get_icon("library") if self.active_tab == "feed" else ThemeManager.get_icon("feeds")
+                icon = ThemeManager.get_icon("library") if self.active_tab == "feed" else ThemeManager.get_icon("search")
                 if i == idx:
                     icon_label = QLabel()
                     icon_label.setPixmap(icon.pixmap(16, 16))

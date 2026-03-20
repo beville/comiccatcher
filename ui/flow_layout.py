@@ -61,6 +61,8 @@ class FlowLayout(QLayout):
         y = rect.y()
         line_height = 0
         spacing = self.spacing()
+        
+        line_data = [] # List of (item, x) for current line
 
         for item in self.items:
             wid = item.widget()
@@ -69,15 +71,27 @@ class FlowLayout(QLayout):
             
             next_x = x + item.sizeHint().width() + space_x
             if next_x > rect.right() and line_height > 0:
+                # Commit current line with vertical centering
+                if not test_only:
+                    for li, lx in line_data:
+                        # Center vertically within line_height
+                        offset_y = (line_height - li.sizeHint().height()) // 2
+                        li.setGeometry(QRect(QPoint(lx, y + offset_y), li.sizeHint()))
+                
                 x = rect.x()
                 y = y + line_height + space_y
                 next_x = x + item.sizeHint().width() + space_x
                 line_height = 0
+                line_data = []
 
-            if not test_only:
-                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
-
+            line_data.append((item, x))
             x = next_x
             line_height = max(line_height, item.sizeHint().height())
+
+        # Commit last line
+        if not test_only:
+            for li, lx in line_data:
+                offset_y = (line_height - li.sizeHint().height()) // 2
+                li.setGeometry(QRect(QPoint(lx, y + offset_y), li.sizeHint()))
 
         return y + line_height - rect.y()
