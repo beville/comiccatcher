@@ -47,7 +47,7 @@ def main() -> int:
             browser = p.chromium.launch(headless=args.headless)
             page = browser.new_page()
             page.goto(base_url, wait_until="domcontentloaded")
-            # Flet/Flutter takes time to boot; wait a bit for something recognizable.
+            # Give the app time to boot; wait a bit for something recognizable.
             page.wait_for_timeout(3000)
 
             # Very light smoke assertions. These selectors may need tuning depending on Flutter web semantics.

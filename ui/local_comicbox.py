@@ -50,6 +50,31 @@ def read_comicbox_cover(path: Path) -> Optional[bytes]:
         return None
 
 
+def read_comicbox_dict_and_cover(path: Path) -> Tuple[Dict[str, Any], Optional[bytes]]:
+    """
+    Read comic metadata AND cover image in a single comicbox pass.
+    Returns (metadata_dict, cover_bytes_or_None).
+    """
+    try:
+        from comicbox.box import Comicbox  # type: ignore
+    except ImportError as e:
+        return {"_comicbox_status": "missing", "_comicbox_error": str(e)}, None
+
+    try:
+        with Comicbox(str(path)) as cb:
+            d = cb.to_dict() or {}
+            try:
+                cover = cb.get_cover_page()
+            except Exception:
+                cover = None
+        if not d:
+            return {"_comicbox_status": "empty"}, cover
+        return d, cover
+    except Exception as e:
+        logger.info(f"comicbox read failed for {path}: {e}")
+        return {"_comicbox_status": "error", "_comicbox_error": str(e)}, None
+
+
 def _inner(d: Dict[str, Any]) -> Dict[str, Any]:
     # comicbox currently returns {"comicbox": {...}} at the top level.
     inner = d.get("comicbox")

@@ -49,6 +49,16 @@ class Publication(BaseModel):
     resources: Optional[List[Link]] = None
     belongsTo: Optional[Dict[str, Any]] = None
 
+    @property
+    def identifier(self) -> str:
+        # Some servers put id at top level, some in metadata.identifier
+        # We also support accessing via .id if pydantic allowed it from extra
+        if hasattr(self, 'id') and self.id:
+            return str(self.id)
+        if self.metadata.identifier:
+            return str(self.metadata.identifier)
+        return ""
+
 class Group(BaseModel):
     model_config = ConfigDict(extra='allow')
     metadata: Metadata

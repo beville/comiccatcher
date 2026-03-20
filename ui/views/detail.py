@@ -17,6 +17,7 @@ from api.progression import ProgressionSync
 from models.opds import Publication, Contributor, Link
 from ui.flow_layout import FlowLayout
 from ui.image_data import TRANSPARENT_DATA_URL
+from ui.views.base_detail import BaseDetailView
 
 logger = get_logger("ui.detail")
 
@@ -24,21 +25,11 @@ class ClickableBadge(QFrame):
     def __init__(self, text, on_click):
         super().__init__()
         self.on_click = on_click
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #333;
-                border-radius: 10px;
-                padding: 2px 10px;
-            }
-            QFrame:hover {
-                background-color: #444;
-            }
-        """)
+        self.setObjectName("badge")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 5, 2)
         label = QLabel(text)
-        label.setStyleSheet("color: #ddd; font-size: 11px; border: none;")
+        label.setStyleSheet("font-size: 11px; border: none;")
         layout.addWidget(label)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -46,11 +37,10 @@ class ClickableBadge(QFrame):
         self.on_click()
         super().mousePressEvent(event)
 
-class DetailView(QWidget):
+class DetailView(BaseDetailView):
     def __init__(self, config_manager, on_back, on_read, on_navigate, on_start_download, on_open_detail):
-        super().__init__()
+        super().__init__(on_back)
         self.config_manager = config_manager
-        self.on_back = on_back
         self.on_read = on_read
         self.on_navigate = on_navigate
         self.on_start_download = on_start_download
@@ -58,40 +48,11 @@ class DetailView(QWidget):
         
         self.api_client = None
         self.opds_client = None
-        self.image_manager = None
         self.progression_sync = None
         
         self._current_pub = None
         self._current_base_url = None
         self._active_load_id = None
-
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(10, 10, 10, 10)
-
-        # Header
-        self.header = QHBoxLayout()
-        self.btn_back = QPushButton("Back")
-        self.btn_back.clicked.connect(self.on_back)
-        self.header.addWidget(self.btn_back)
-        self.header.addStretch()
-        self.layout.addLayout(self.header)
-
-        # Progress
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 0)
-        self.progress.setVisible(False)
-        self.layout.addWidget(self.progress)
-
-        # Main Scroll Area
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.scroll.setWidget(self.content_widget)
-        self.layout.addWidget(self.scroll)
 
     def load_publication(self, pub: Publication, base_url: str, api_client, opds_client, image_manager, history=None, force_refresh: bool = False):
         self.api_client = api_client
@@ -182,62 +143,40 @@ class DetailView(QWidget):
                 
                 current_page = min(current_page, total_pages)
                 self.progression_label.setText(f"Page {current_page} of {total_pages} ({int(pct*100)}%)")
+                self._update_cover_progress(current_page, total_pages)
+                
+                # Update button text
+                if current_page >= total_pages:
+                    self.btn_read.setText("Read Again")
+                elif current_page > 1 or pct > 0.01: # Use a small epsilon
+                    self.btn_read.setText("Resume Reading")
+                else:
+                    self.btn_read.setText("Read Now")
             else:
                 self.progression_label.setText(f"Progress: {int(pct*100)}%")
+                if pct > 0.01:
+                    self.btn_read.setText("Resume Reading")
 
     def _render_details(self, pub: Publication, base_url: str):
-        self._clear_layout(self.content_layout)
-
+        info_layout = self._setup_main_info_layout()
         m = pub.metadata
-        top_layout = FlowLayout(spacing=20)
         
-        # Cover
-        cover_label = QLabel()
-        cover_label.setMinimumSize(200, 300)
-        cover_label.setMaximumSize(300, 450)
-        cover_label.setStyleSheet("background-color: #111; border: 1px solid #444;")
-        cover_label.setScaledContents(True)
-        top_layout.addWidget(cover_label)
-        
-        img_url = self._get_image_url(pub)
-        if img_url:
-            asyncio.create_task(self._load_cover(urljoin(base_url, img_url), cover_label))
-
-        # Info Column
-        info_widget = QWidget()
-        info_layout = QVBoxLayout(info_widget)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        
-        title = QLabel(m.title)
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #111;")
-        title.setWordWrap(True)
-        info_layout.addWidget(title)
-        
-        if m.subtitle:
-            subtitle = QLabel(m.subtitle)
-            subtitle.setStyleSheet("font-size: 18px; color: #444; font-style: italic;")
-            info_layout.addWidget(subtitle)
+        self._add_title(m.title, m.subtitle)
 
         # Action Buttons
-        btn_layout = QHBoxLayout()
-        btn_read = QPushButton("Read Now")
-        btn_read.setStyleSheet("background-color: #2e7d32; color: white; padding: 10px; font-weight: bold;")
         manifest_url = next((urljoin(base_url, l.href) for l in pub.links if l.type in ["application/webpub+json", "application/divina+json"]), base_url)
-        btn_read.clicked.connect(lambda: self.on_read(pub, manifest_url))
-        btn_layout.addWidget(btn_read)
+        btn_read = self._add_read_button(lambda: self.on_read(pub, manifest_url), "Read Now")
+        btn_read.setObjectName("primary_button")
         
         download_url = next((urljoin(base_url, l.href) for l in pub.links if l.rel == "http://opds-spec.org/acquisition" or (l.type and "cbz" in l.type)), None)
         if download_url:
             btn_down = QPushButton("Download")
+            btn_down.setMinimumHeight(40)
             btn_down.clicked.connect(lambda: self.on_start_download(pub, download_url))
-            btn_layout.addWidget(btn_down)
-        
-        btn_layout.addStretch()
-        info_layout.addLayout(btn_layout)
+            self.actions_layout.insertWidget(1, btn_down)
 
         # Progression & Page Count
-        self.progression_label = QLabel("")
-        self.progression_label.setStyleSheet("font-size: 14px; color: #444;")
+        self._add_progression_label()
         
         total_pages = 0
         if hasattr(m, 'numberOfPages') and m.numberOfPages:
@@ -248,9 +187,12 @@ class DetailView(QWidget):
         if total_pages:
             self.progression_label.setText(f"Pages: {total_pages}")
             
-        info_layout.addWidget(self.progression_label)
+        # Cover
+        img_url = self._get_image_url(pub)
+        if img_url:
+            asyncio.create_task(self._load_cover(urljoin(base_url, img_url)))
 
-        # Hotlinks / Credits
+        # Metadata
         role_map = {
             "author": "Author", "artist": "Artist", "penciler": "Penciler", 
             "inker": "Inker", "colorist": "Colorist", "letterer": "Letterer", 
@@ -262,70 +204,35 @@ class DetailView(QWidget):
                 self._add_clickable_metadata(info_layout, label, val, base_url)
 
         if m.published:
-            l = QLabel(f"<b>Published:</b> {m.published}")
-            l.setStyleSheet("color: #444;")
-            info_layout.addWidget(l)
+            self._add_metadata_row("Published", m.published)
         
         # Subjects
         if m.subject:
-            s_label = QLabel("<b>Subjects:</b>")
-            s_label.setStyleSheet("color: #444;")
-            info_layout.addWidget(s_label)
-            
-            subj_widget = QWidget()
-            subj_layout = FlowLayout(subj_widget, spacing=5)
-            
-            subjects = m.subject if isinstance(m.subject, list) else [m.subject]
-            for s in subjects:
-                name = s.get("name") if isinstance(s, dict) else str(s)
-                href = None
-                links = s.get("links", []) if isinstance(s, dict) else []
-                for l in links:
-                    if "opds" in (l.get("type", "") if isinstance(l, dict) else getattr(l, 'type', '') or ""):
-                        href = l.get("href") if isinstance(l, dict) else l.href
-                        break
-                
-                if href:
-                    full_href = urljoin(base_url, href)
-                    badge = ClickableBadge(name, lambda u=full_href, t=name: self.on_navigate(u, t))
-                    subj_layout.addWidget(badge)
-                else:
-                    l = QLabel(name)
-                    l.setStyleSheet("background-color: #ddd; color: #111; border-radius: 10px; padding: 2px 10px; font-size: 11px;")
-                    subj_layout.addWidget(l)
-            info_layout.addWidget(subj_widget)
+            self._add_subjects(info_layout, m.subject, base_url)
 
         if m.description:
-            d_label = QLabel("<b>Summary:</b>")
-            d_label.setStyleSheet("color: #444;")
-            info_layout.addWidget(d_label)
-            summary = QLabel(m.description)
-            summary.setWordWrap(True)
-            summary.setStyleSheet("color: #444; font-size: 13px;")
-            info_layout.addWidget(summary)
+            self._add_metadata_row("Summary", m.description)
 
-        info_layout.addStretch()
-        top_layout.addWidget(info_widget)
-        
-        container = QWidget()
-        container.setLayout(top_layout)
-        self.content_layout.addWidget(container)
+        self.info_layout.addStretch()
 
         # carousels
         self._add_carousels(pub, base_url)
 
-    def _clear_layout(self, layout):
-        if layout is None: return
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-            else:
-                sub_layout = item.layout()
-                if sub_layout:
-                    self._clear_layout(sub_layout)
-                    sub_layout.deleteLater()
+    async def _load_cover(self, url: str):
+        await self.image_manager.get_image_b64(url)
+        full_path = self.image_manager._get_cache_path(url)
+        if full_path.exists():
+            pixmap = QPixmap(str(full_path))
+            if not pixmap.isNull():
+                self.cover_label.setPixmap(pixmap)
+
+    def _get_image_url(self, pub: Publication) -> Optional[str]:
+        if pub.images: return pub.images[0].href
+        if pub.links:
+            for link in pub.links:
+                if "image" in (link.rel or "") or (link.type and "image/" in link.type):
+                    return link.href
+        return None
 
     def _add_clickable_metadata(self, layout, label, contributors, base_url):
         items = contributors if isinstance(contributors, list) else [contributors]
@@ -334,8 +241,7 @@ class DetailView(QWidget):
         row_layout.setSpacing(5)
         
         l_label = QLabel(f"<b>{label}:</b>")
-        l_label.setFixedWidth(80)
-        l_label.setStyleSheet("color: #444;")
+        l_label.setFixedWidth(100)
         row_layout.addWidget(l_label)
         
         flow_layout = FlowLayout(spacing=5)
@@ -355,12 +261,11 @@ class DetailView(QWidget):
                 btn = QPushButton(name)
                 btn.setFlat(True)
                 btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                btn.setStyleSheet("color: #3791ef; text-align: left; padding: 0; border: none; font-size: 13px;")
+                btn.setObjectName("link_button")
                 btn.clicked.connect(lambda _, u=full_href, t=name: self.on_navigate(u, t))
                 flow_layout.addWidget(btn)
             else:
                 l = QLabel(name)
-                l.setStyleSheet("color: #111;")
                 flow_layout.addWidget(l)
         
         row_widget = QWidget()
@@ -371,11 +276,46 @@ class DetailView(QWidget):
         container.setLayout(row_layout)
         layout.addWidget(container)
 
+    def _add_subjects(self, layout, subject, base_url):
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(5)
+        
+        l_label = QLabel("<b>Subjects:</b>")
+        l_label.setFixedWidth(100)
+        row_layout.addWidget(l_label)
+        
+        subj_widget = QWidget()
+        subj_layout = FlowLayout(subj_widget, spacing=5)
+        
+        subjects = subject if isinstance(subject, list) else [subject]
+        for s in subjects:
+            name = s.get("name") if isinstance(s, dict) else str(s)
+            href = None
+            links = s.get("links", []) if isinstance(s, dict) else []
+            for l in links:
+                if "opds" in (l.get("type", "") if isinstance(l, dict) else getattr(l, 'type', '') or ""):
+                    href = l.get("href") if isinstance(l, dict) else l.href
+                    break
+            
+            if href:
+                full_href = urljoin(base_url, href)
+                badge = ClickableBadge(name, lambda u=full_href, t=name: self.on_navigate(u, t))
+                subj_layout.addWidget(badge)
+            else:
+                l = QLabel(name)
+                l.setObjectName("badge_static")
+                l.setStyleSheet("border-radius: 10px; padding: 2px 10px; font-size: 11px; border: 1px solid rgba(128, 128, 128, 50); background-color: rgba(128, 128, 128, 20);")
+                subj_layout.addWidget(l)
+        
+        row_layout.addWidget(subj_widget, 1)
+        container = QWidget()
+        container.setLayout(row_layout)
+        layout.addWidget(container)
+
     def _add_carousels(self, pub: Publication, base_url: str):
         belongs_to = pub.metadata.belongsTo or pub.belongsTo
         if not belongs_to: return
-        
-        from ui.views.browser import PublicationCard
         
         for rel_type in ["series", "collection"]:
             items = belongs_to.get(rel_type, [])
@@ -397,19 +337,20 @@ class DetailView(QWidget):
                     
                     btn_all = QPushButton("See All")
                     btn_all.setFlat(True)
-                    btn_all.setStyleSheet("color: #3791ef; margin-top: 20px;")
+                    btn_all.setCursor(Qt.CursorShape.PointingHandCursor)
+                    btn_all.setObjectName("see_all_button")
                     full_href = urljoin(base_url, l_href)
                     btn_all.clicked.connect(lambda _, u=full_href, t=label_text: self.on_navigate(u, t))
                     header.addWidget(btn_all)
                     
                     self.content_layout.addLayout(header)
                     
-                    # Async load carousel content
                     scroll = QScrollArea()
                     scroll.setFixedHeight(280)
                     scroll.setWidgetResizable(True)
                     scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
                     scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+                    scroll.setStyleSheet("background: transparent; border: none;")
                     
                     inner = QWidget()
                     h_layout = QHBoxLayout(inner)
@@ -432,52 +373,10 @@ class DetailView(QWidget):
                 layout.addWidget(QLabel("No items found."))
                 return
 
-            base_server_url = self.api_client.profile.get_base_url()
+            base_feed_url = self.api_client.profile.get_base_url()
             for pub in pubs[:15]:
-                card = PublicationCard(pub, base_server_url, self.image_manager)
+                card = PublicationCard(pub, base_feed_url, self.image_manager)
                 card.clicked.connect(self.on_open_detail)
                 layout.addWidget(card)
         except Exception as e:
             logger.error(f"Carousel error: {e}")
-
-    async def _load_cover(self, url: str, label: QLabel):
-        asset_path = await self.image_manager.get_image_asset_path(url)
-        try:
-            if not label: return
-        except RuntimeError:
-            return
-
-        if asset_path:
-            from config import CACHE_DIR
-            import hashlib
-            url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
-            full_path = CACHE_DIR / url_hash[:2] / url_hash
-            if full_path.exists():
-                pixmap = QPixmap(str(full_path))
-                if not pixmap.isNull():
-                    try:
-                        label.setPixmap(pixmap)
-                    except RuntimeError:
-                        pass
-
-    def _get_image_url(self, pub: Publication) -> Optional[str]:
-        if pub.images: return pub.images[0].href
-        if pub.links:
-            for link in pub.links:
-                if "image" in (link.rel or "") or (link.type and "image/" in link.type):
-                    return link.href
-        return None
-
-    def _format_contributors(self, val: Any) -> str:
-        if not val: return ""
-        if isinstance(val, str): return val
-        if isinstance(val, list):
-            names = []
-            for item in val:
-                if isinstance(item, str): names.append(item)
-                elif hasattr(item, "name"): names.append(item.name)
-                elif isinstance(item, dict): names.append(item.get("name", ""))
-            return ", ".join(filter(None, names))
-        if hasattr(val, "name"): return val.name
-        if isinstance(val, dict): return val.get("name", str(val))
-        return str(val)

@@ -1,22 +1,68 @@
+from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QLineEdit, QRadioButton, QGroupBox, QFileDialog, QFrame
+    QLineEdit, QRadioButton, QGroupBox, QFileDialog, QFrame, QScrollArea,
+    QComboBox
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap
 from config import ConfigManager
+from ui.views.feed_management import FeedManagementView
 
 class SettingsView(QWidget):
+    theme_changed = pyqtSignal()
+    
     def __init__(self, config_manager: ConfigManager):
         super().__init__()
         self.config_manager = config_manager
 
-        self.layout = QVBoxLayout(self)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Use a scroll area for settings
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setStyleSheet("QScrollArea { border: none; }")
+        
+        self.container = QWidget()
+        self.layout = QVBoxLayout(self.container)
         self.layout.setContentsMargins(20, 20, 20, 20)
         self.layout.setSpacing(20)
 
         self.title = QLabel("App Settings")
         self.title.setStyleSheet("font-size: 24px; font-weight: bold;")
         self.layout.addWidget(self.title)
+
+        # Theme
+        self.theme_group = QGroupBox("Theme")
+        self.theme_layout = QHBoxLayout(self.theme_group)
+        
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem("Light", "light")
+        self.theme_combo.addItem("Dark", "dark")
+        self.theme_combo.addItem("OLED (Black)", "oled")
+        self.theme_combo.addItem("Deep Blue", "blue")
+        self.theme_combo.addItem("Light Blue (Fresh)", "light_blue")
+        
+        current_theme = self.config_manager.get_theme()
+        index = self.theme_combo.findData(current_theme)
+        if index >= 0:
+            self.theme_combo.setCurrentIndex(index)
+        
+        self.theme_combo.currentIndexChanged.connect(self._on_theme_combo_changed)
+        
+        self.theme_layout.addWidget(QLabel("Select Theme: "))
+        self.theme_layout.addWidget(self.theme_combo)
+        self.theme_layout.addStretch()
+        
+        self.layout.addWidget(self.theme_group)
+
+        # Feeds Management
+        self.feeds_group = QGroupBox("Feeds")
+        self.feeds_layout = QVBoxLayout(self.feeds_group)
+        self.feed_management = FeedManagementView(self.config_manager)
+        self.feeds_layout.addWidget(self.feed_management)
+        self.layout.addWidget(self.feeds_group)
 
         # Browsing Method
         self.method_group = QGroupBox("Browsing Method")
@@ -66,11 +112,40 @@ class SettingsView(QWidget):
         # About
         self.about_group = QGroupBox("About")
         self.about_layout = QVBoxLayout(self.about_group)
-        self.about_layout.addWidget(QLabel("ComicCatcher v0.1.0"))
-        self.about_layout.addWidget(QLabel("PyQt6 Native Edition"))
+        
+        about_header = QHBoxLayout()
+        
+        # App Icon
+        self.icon_label = QLabel()
+        # Use smaller version for better scaling
+        icon_path = Path(__file__).parent.parent.parent / "resources" / "app_64.png"
+        if not icon_path.exists():
+             icon_path = Path(__file__).parent.parent.parent / "resources" / "app.png"
+             
+        if icon_path.exists():
+            pixmap = QPixmap(str(icon_path))
+            self.icon_label.setPixmap(pixmap.scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        
+        about_header.addWidget(self.icon_label)
+        
+        text_layout = QVBoxLayout()
+        text_layout.addWidget(QLabel("<b>ComicCatcher v0.1.0</b>"))
+        text_layout.addWidget(QLabel("PyQt6 Native Edition"))
+        about_header.addLayout(text_layout)
+        about_header.addStretch()
+        
+        self.about_layout.addLayout(about_header)
         self.layout.addWidget(self.about_group)
 
         self.layout.addStretch()
+        
+        self.scroll.setWidget(self.container)
+        self.main_layout.addWidget(self.scroll)
+
+    def _on_theme_combo_changed(self, index):
+        theme = self.theme_combo.itemData(index)
+        self.config_manager.set_theme(theme)
+        self.theme_changed.emit()
 
     def _on_method_changed(self, method):
         # Radio button toggle emits for both uncheck and check

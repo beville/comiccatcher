@@ -1,7 +1,7 @@
 from typing import Optional, List
 from pydantic import BaseModel, HttpUrl, Field
 
-class ServerProfile(BaseModel):
+class FeedProfile(BaseModel):
     id: str
     name: str
     url: str

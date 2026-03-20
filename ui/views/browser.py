@@ -35,7 +35,7 @@ class PublicationCard(QFrame):
         self.setFixedWidth(160)
         self.setFixedHeight(260)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("background-color: #222; border-radius: 5px;")
+        self.setObjectName("publication_card")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -45,9 +45,8 @@ class PublicationCard(QFrame):
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setWordWrap(True)
         self.cover_label.setStyleSheet("""
-            background-color: #111; 
+            background-color: rgba(0, 0, 0, 40); 
             border-radius: 3px; 
-            color: #555; 
             font-size: 11px; 
             padding: 10px;
         """)
@@ -55,7 +54,7 @@ class PublicationCard(QFrame):
         layout.addWidget(self.cover_label)
 
         self.title_label = QLabel(pub.metadata.title)
-        self.title_label.setStyleSheet("font-size: 10px; color: white; border: none;")
+        self.title_label.setStyleSheet("font-size: 10px; border: none;")
         self.title_label.setWordWrap(True)
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setFixedHeight(40)
@@ -77,27 +76,23 @@ class PublicationCard(QFrame):
             asyncio.create_task(self._load_thumb(full_img_url))
 
     async def _load_thumb(self, url: str):
-        asset_path = await self.image_manager.get_image_asset_path(url)
-        
+        await self.image_manager.get_image_b64(url)
+
         # Check if the widget still exists before continuing
         try:
             if not self.cover_label: return
         except RuntimeError:
             return
 
-        if asset_path:
-            from config import CACHE_DIR
-            import hashlib
-            url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
-            full_path = CACHE_DIR / url_hash[:2] / url_hash
-            if full_path.exists():
-                pixmap = QPixmap(str(full_path))
-                if not pixmap.isNull():
-                    try:
-                        self.cover_label.setText("") # Clear the title fallback
-                        self.cover_label.setPixmap(pixmap)
-                    except RuntimeError:
-                        pass # Widget was deleted while we were processing the pixmap
+        full_path = self.image_manager._get_cache_path(url)
+        if full_path.exists():
+            pixmap = QPixmap(str(full_path))
+            if not pixmap.isNull():
+                try:
+                    self.cover_label.setText("")  # Clear the title fallback
+                    self.cover_label.setPixmap(pixmap)
+                except RuntimeError:
+                    pass  # Widget was deleted while we were processing the pixmap
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.pub, self.self_url)
@@ -108,7 +103,6 @@ class PagingBar(QFrame):
         super().__init__()
         self.on_navigate = on_navigate
         self.setFixedHeight(45)
-        self.setStyleSheet("background-color: #2d2d2d; border-bottom: 1px solid #3e3e42;")
         self.layout = QHBoxLayout(self)
         self.layout.setContentsMargins(10, 0, 10, 0)
         self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter) # Center the bar
@@ -116,31 +110,12 @@ class PagingBar(QFrame):
         self.btn_first = QPushButton("<<")
         self.btn_prev = QPushButton("<")
         self.label_status = QLabel("Page 1")
-        self.label_status.setStyleSheet("color: #ffffff; font-weight: bold; margin: 0 10px; font-size: 13px;")
+        self.label_status.setStyleSheet("font-weight: bold; margin: 0 10px; font-size: 13px;")
         self.btn_next = QPushButton(">")
         self.btn_last = QPushButton(">>")
         
-        button_style = """
-            QPushButton {
-                background-color: #3e3e42;
-                color: #ffffff;
-                border: 1px solid #454545;
-                border-radius: 3px;
-                padding: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #505050;
-            }
-            QPushButton:disabled {
-                color: #666666;
-                background-color: #2d2d2d;
-            }
-        """
-        
         for b in [self.btn_first, self.btn_prev, self.btn_next, self.btn_last]:
             b.setFixedWidth(40)
-            b.setStyleSheet(button_style)
             self.layout.addWidget(b)
             if b == self.btn_prev: self.layout.addWidget(self.label_status)
             
@@ -242,6 +217,7 @@ class BrowserView(QWidget):
 
         # Continuous Mode state
         self.sparse_buffer = {} # global_index -> item
+        self._last_cols = 1
         self._scroll_debounce = QTimer()
         self._scroll_debounce.setSingleShot(True)
         self._scroll_debounce.setInterval(300)
@@ -257,24 +233,19 @@ class BrowserView(QWidget):
         self.header_widget = QWidget()
         self.header = QHBoxLayout(self.header_widget)
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.status_label.setStyleSheet("font-size: 11px;")
         
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.setVisible(False)
         
         self.btn_facets = QPushButton("Filters")
-        self.btn_facets.setStyleSheet("background-color: #3e3e42; color: white; padding: 4px 8px; border-radius: 3px;")
         self.facet_menu = QMenu(self)
         self.btn_facets.setMenu(self.facet_menu)
         self.btn_facets.setVisible(False)
         
         self.paging_mode_combo = QComboBox()
         self.paging_mode_combo.addItems(["ReFit Mode", "Continuous Mode", "Traditional"])
-        self.paging_mode_combo.setStyleSheet("""
-            QComboBox { background-color: #3e3e42; color: white; border: 1px solid #454545; border-radius: 3px; padding: 2px 5px; }
-            QComboBox::drop-down { border: none; }
-        """)
         current_method = self.config_manager.get_scroll_method()
         if current_method == "continuous":
             self.paging_mode_combo.setCurrentText("Continuous Mode")
@@ -320,12 +291,12 @@ class BrowserView(QWidget):
         # Paging Bar
         self.paging_bar = PagingBar(self.on_navigate)
         self.paging_bar.setVisible(False)
-        self.paging_bar.setStyleSheet("background-color: #252526; border-bottom: 1px solid #333;")
+        self.paging_bar.setObjectName("top_header")
         
         # ReFit Paging Bar
         self.refit_paging_bar = PagingBar(self.on_navigate)
         self.refit_paging_bar.setVisible(False)
-        self.refit_paging_bar.setStyleSheet("background-color: #1e3a5f; border-bottom: 1px solid #333;")
+        self.refit_paging_bar.setObjectName("top_header")
 
         self.paging_container_layout.addWidget(self.paging_bar)
         self.paging_container_layout.addWidget(self.refit_paging_bar)
@@ -339,15 +310,7 @@ class BrowserView(QWidget):
         self.progress.setFixedHeight(3)
         self.progress.setTextVisible(False)
         self.progress.setRange(0, 0)
-        self.progress.setStyleSheet("""
-            QProgressBar {
-                background: transparent;
-                border: none;
-            }
-            QProgressBar::chunk {
-                background-color: #3791ef;
-            }
-        """)
+        self.progress.setStyleSheet("QProgressBar { background: transparent; border: none; }")
         self.progress.setVisible(False)
 
     def resizeEvent(self, event):
@@ -362,21 +325,14 @@ class BrowserView(QWidget):
         if method == "refit" and self.items_buffer:
             # Re-render current offset with new capacity
             self._render_refit_screen()
-        elif method == "continuous" and self.total_items:
+        elif method == "continuous" and self.sparse_buffer:
             # Recalculate layout for continuous mode
             available_w = self.scroll.viewport().width() - 20
             self._last_cols = max(1, available_w // 175) if self.is_pub_mode else 1
-            item_h = 275 if self.is_pub_mode else 45
-            
-            rows = math.ceil(self.total_items / self._last_cols) if self._last_cols > 0 else 0
-            total_h = rows * item_h
-            
-            self.content_container.setMinimumHeight(total_h)
-            self.content_container.setMaximumHeight(total_h)
             self.content_container.setFixedWidth(self.scroll.viewport().width())
-            
-            # Reposition existing widgets and potentially load new ones
-            asyncio.create_task(self._update_continuous_view())
+            self._resize_continuous_canvas()
+            self._sync_continuous_view()
+            asyncio.create_task(self._update_continuous_data())
 
     def keyPressEvent(self, event: QKeyEvent):
         method = self.config_manager.get_scroll_method()
@@ -419,7 +375,7 @@ class BrowserView(QWidget):
         if hasattr(self, '_last_loaded_url') and self._last_loaded_url:
             asyncio.create_task(self.load_feed(self._last_loaded_url, force_refresh=True))
 
-    def load_profile(self, profile):
+    def set_feed_context(self, profile):
         self.api_client = APIClient(profile)
         self.opds_client = OPDS2Client(self.api_client)
         self.image_manager = ImageManager(self.api_client)
@@ -599,12 +555,6 @@ class BrowserView(QWidget):
             
             self.facet_menu.addSeparator()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.config_manager.get_scroll_method() == "refit" and self.items_buffer:
-            # Re-render the current offset with the new capacity
-            self._render_refit_screen()
-
     def _render_refit_screen(self):
         if not self.items_buffer: return
         
@@ -769,7 +719,6 @@ class BrowserView(QWidget):
             if self.on_offset_change: self.on_offset_change(self.refit_offset)
             self._render_refit_screen()
         elif self.next_url and not self.is_loading_more:
-            self.is_loading_more = True
             asyncio.create_task(self._fetch_more_for_refit(jump=True))
 
     async def _fetch_more_for_refit(self, jump=False):
@@ -912,6 +861,7 @@ class BrowserView(QWidget):
         except Exception as e:
             logger.error(f"Error jumping to last: {e}")
         finally:
+            self.is_loading_more = False
             self.progress.setVisible(False)
 
     def _update_after_fetch(self, feed, url, reset_offset=True):
@@ -973,55 +923,89 @@ class BrowserView(QWidget):
         # 1. Setup virtual canvas size
         available_w = self.scroll.viewport().width() - 20
         self._last_cols = max(1, available_w // 175) if self.is_pub_mode else 1
-        item_h = 275 if self.is_pub_mode else 45
-        
-        rows = math.ceil(self.total_items / self._last_cols) if self._last_cols > 0 else 0
-        total_h = rows * item_h
-        
-        # We use fixed size for the container to lock the scrollbar range
-        self.content_container.setMinimumHeight(total_h)
-        self.content_container.setMaximumHeight(total_h)
         self.content_container.setFixedWidth(self.scroll.viewport().width())
+
         # 2. Inject current feed items into sparse buffer
         start_idx = self.buffer_absolute_offset
         items = feed.publications or [n for n in feed.navigation if n.title != "Start"]
         for i, item in enumerate(items):
             self.sparse_buffer[start_idx + i] = item
-            
-        # 3. Trigger initial sync
+
+        # 3. Size canvas (uses total_items if known, estimates from buffer otherwise)
+        self._resize_continuous_canvas()
+
+        # 4. Trigger initial sync
         self._sync_continuous_view()
         asyncio.create_task(self._update_continuous_data())
 
+    def _resize_continuous_canvas(self):
+        """Resize the virtual canvas to fit all known items.
+
+        Uses server-reported total_items when available.  When the server does
+        not include numberOfItems (total_items == 0) we estimate from the
+        highest index we have loaded plus one extra server page so the
+        scrollbar extends beyond the currently loaded region.
+        """
+        item_h = 275 if self.is_pub_mode else 45
+        cols = max(1, self._last_cols) if hasattr(self, '_last_cols') else 1
+        per_page = 100
+        if hasattr(self, '_last_feed_metadata'):
+            per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+
+        effective_total = self.total_items
+        if not effective_total and self.sparse_buffer:
+            # No server count: estimate so the scrollbar reaches past what we know
+            effective_total = max(self.sparse_buffer.keys()) + per_page + 1
+
+        if not effective_total:
+            return
+
+        rows = math.ceil(effective_total / cols)
+        total_h = rows * item_h
+        self.content_container.setMinimumHeight(total_h)
+        self.content_container.setMaximumHeight(total_h)
+
     def _sync_continuous_view(self):
         """Synchronously update visible widgets based on current scroll position."""
-        if not self.total_items: return
-        
+        if not self.total_items and not self.sparse_buffer:
+            return
+
+        # Effective total: server count if known, else estimated from loaded data
+        per_page = 100
+        if hasattr(self, '_last_feed_metadata'):
+            per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+        effective_total = self.total_items or (max(self.sparse_buffer.keys()) + per_page + 1)
+
         # 1. Calculate visible range
         viewport_h = self.scroll.viewport().height()
         scroll_y = self.scroll.verticalScrollBar().value()
         item_h = 275 if self.is_pub_mode else 45
-        cols = self._last_cols
-        
+        cols = max(1, getattr(self, '_last_cols', 1))
+
         start_row = scroll_y // item_h
         end_row = (scroll_y + viewport_h) // item_h
-        
-        # Buffer of 1 row above/below
-        start_row = max(0, start_row - 1)
-        end_row = min(math.ceil(self.total_items / cols), end_row + 1)
-        
-        visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
-        
+
+        # 3-row lookahead above and below reduces placeholder flicker on large feeds
+        start_row = max(0, start_row - 3)
+        effective_rows = math.ceil(effective_total / cols)
+        end_row = min(effective_rows, end_row + 3)
+
+        visible_indices = set(range(start_row * cols, min(effective_total, (end_row + 1) * cols)))
+
         # 2. Update status text
-        current_idx = start_row * cols
-        # Estimate items per screen for the label
+        first_visible = (scroll_y // item_h) * cols
         est_items = ((viewport_h // item_h) + 1) * cols
-        self.status_label.setText(f"Showing {current_idx+1}-{min(self.total_items, current_idx + est_items)} of {self.total_items}")
+        total_label = str(self.total_items) if self.total_items else "?"
+        self.status_label.setText(
+            f"Showing {first_visible + 1}-{min(effective_total, first_visible + est_items)} of {total_label}"
+        )
 
         # 3. Handle widget lifecycle
         self._render_visible_range(visible_indices, item_h, cols)
 
     async def _update_continuous_data(self):
-        if not self.total_items or self._is_updating_continuous: return
+        if (not self.total_items and not self.sparse_buffer) or self._is_updating_continuous:
+            return
         self._is_updating_continuous = True
         
         try:
@@ -1032,18 +1016,22 @@ class BrowserView(QWidget):
                 scroll_y = self.scroll.verticalScrollBar().value()
                 item_h = 275 if self.is_pub_mode else 45
                 cols = self._last_cols
-                start_row = max(0, (scroll_y // item_h) - 1)
-                end_row = min(math.ceil(self.total_items / cols), (scroll_y + viewport_h) // item_h + 1)
-                visible_indices = set(range(start_row * cols, min(self.total_items, (end_row + 1) * cols)))
+                per_page = 100
+                if hasattr(self, '_last_feed_metadata'):
+                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
+                effective_total = self.total_items or (
+                    max(self.sparse_buffer.keys()) + per_page + 1 if self.sparse_buffer else 0
+                )
+                if not effective_total:
+                    break
+                start_row = max(0, (scroll_y // item_h) - 3)
+                end_row = min(math.ceil(effective_total / cols), (scroll_y + viewport_h) // item_h + 3)
+                visible_indices = set(range(start_row * cols, min(effective_total, (end_row + 1) * cols)))
                 
                 missing = [i for i in visible_indices if i not in self.sparse_buffer]
                 if not missing:
                     break
-                    
-                per_page = 100
-                if hasattr(self, '_last_feed_metadata'):
-                    per_page = getattr(self._last_feed_metadata, "itemsPerPage", 100) or 100
-                
+
                 target_idx = missing[0]
                 target_page = (target_idx // per_page) + (self._server_index_base or 0)
                 
@@ -1061,13 +1049,6 @@ class BrowserView(QWidget):
             self._is_updating_continuous = False
 
     def _render_visible_range(self, visible_indices, item_h, cols):
-        # Update Status
-        viewport_h = self.scroll.viewport().height()
-        scroll_y = self.scroll.verticalScrollBar().value()
-        start_row = scroll_y // item_h
-        current_idx = start_row * cols
-        # self.status_label.setText handled in sync_view
-
         # Remove widgets no longer visible
         to_remove = set(self._rendered_widgets.keys()) - visible_indices
         for idx in to_remove:
@@ -1106,17 +1087,15 @@ class BrowserView(QWidget):
     def _create_placeholder_widget(self):
         w = QFrame()
         w.is_placeholder = True
+        w.setObjectName("placeholder_card")
         if self.is_pub_mode:
             w.setFixedSize(160, 260)
-            w.setStyleSheet("background-color: #1a1a1a; border-radius: 5px; border: 1px dashed #333;")
             layout = QVBoxLayout(w)
             lbl = QLabel("...")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("color: #444;")
             layout.addWidget(lbl)
         else:
             w.setFixedSize(self.content_container.width() - 20, 40)
-            w.setStyleSheet("background-color: #1a1a1a; border-radius: 4px; border: 1px dashed #333;")
         return w
 
     def _create_continuous_widget(self, item):
@@ -1129,7 +1108,7 @@ class BrowserView(QWidget):
             btn = QPushButton(item.title)
             btn.setFixedSize(self.content_container.width() - 20, 40)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet("text-align: left; padding: 10px; background-color: #2d2d2d; color: white; border: 1px solid #3e3e42; border-radius: 4px;")
+            btn.setObjectName("nav_continuous_button")
             u = urljoin(self.api_client.profile.get_base_url(), item.href)
             btn.clicked.connect(lambda _, url=u, t=item.title: self.on_navigate(url, t))
             return btn
@@ -1166,7 +1145,9 @@ class BrowserView(QWidget):
 
             for i, item in enumerate(new_items):
                 self.sparse_buffer[page_start_idx + i] = item
-            
+
+            # Grow canvas if total_items just became known or estimate has changed
+            self._resize_continuous_canvas()
             return True
                 
         except Exception as e:
@@ -1255,7 +1236,7 @@ class BrowserView(QWidget):
             btn = QPushButton(n.title)
             btn.setFlat(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setStyleSheet("text-align: left; padding: 8px; border-bottom: 1px solid #333; color: #3791ef;")
+            btn.setObjectName("nav_link_button")
             url = urljoin(self.api_client.profile.get_base_url(), n.href)
             btn.clicked.connect(lambda _, u=url, t=n.title: self.on_navigate(u, t))
             nav_layout.addWidget(btn)

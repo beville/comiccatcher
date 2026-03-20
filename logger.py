@@ -27,20 +27,10 @@ def setup_logging(debug=False):
     file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root_logger.addHandler(file_handler)
 
-    # Flet can be extremely noisy at DEBUG (e.g. scroll wheel events / control mount spam).
-    # Keep ComicCatcher debug logs, but clamp Flet/transport internals to INFO.
+    # Clamp noisy third-party loggers to INFO so ComicCatcher DEBUG logs stay readable.
     noisy = [
-        "flet",
-        "flet_controls",
-        "flet_transport",
-        "flet_desktop",
-        "flet_web",
-        "flet_web.fastapi",
         "httpx",
         "httpcore",
-        "uvicorn",
-        "uvicorn.error",
-        "uvicorn.access",
         "asyncio",
     ]
     for name in noisy:

@@ -61,29 +61,6 @@ class ImageManager:
 
         return None
 
-    async def get_image_asset_path(self, url: str, api_client: Optional[APIClient] = None) -> Optional[str]:
-        """Returns a Flet-compatible relative asset path (e.g. cache/xx/hash) for the given URL."""
-        if not url:
-            return None
-
-        cache_path = self._get_cache_path(url)
-        if not cache_path.exists():
-            # Fetch and cache it using existing logic.
-            await self.get_image_b64(url, api_client=api_client)
-
-        if cache_path.exists():
-
-            # config.CACHE_DIR is symlinked into the Flet assets folder as 'cache'.
-            from config import CACHE_DIR
-            try:
-                rel = cache_path.relative_to(CACHE_DIR)
-                return f"cache/{rel}"
-            except Exception:
-                # If we can't derive a relative path, fall back to base64 if needed, 
-                # but for now we return None to let the UI decide.
-                return None
-        return None
-
     def _get_cache_path(self, url: str) -> Path:
         """Generates a unique file path for a URL."""
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()

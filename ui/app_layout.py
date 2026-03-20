@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, QTimer, QRect, QPoint
 from PyQt6.QtGui import QIcon
 
-from config import ConfigManager
+from config import ConfigManager, CONFIG_DIR
 from ui.flow_layout import FlowLayout
-from ui.views.servers import ServersView
+from ui.views.feed_list import FeedListView
 from ui.views.library import LocalLibraryView
 from ui.views.library_detail import LocalComicDetailView
 from ui.views.local_reader import LocalReaderView
@@ -26,8 +26,37 @@ from ui.views.reader import ReaderView
 from ui.views.settings import SettingsView
 from ui.views.downloads import DownloadsView
 from ui.views.search_root import SearchRootView
+from ui.theme_manager import ThemeManager
 from api.download_manager import DownloadManager
-import logger
+from api.client import APIClient
+from api.local_db import LocalLibraryDB
+from api.opds_v2 import OPDS2Client
+from api.image_manager import ImageManager
+
+from logger import get_logger
+logger = get_logger("ui.app_layout")
+
+class DownloadPopover(QFrame):
+    def __init__(self, parent, download_manager: DownloadManager):
+        super().__init__(parent)
+        self.dm = download_manager
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setFixedWidth(350)
+        self.setFixedHeight(400)
+        self.setObjectName("download_popover")
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.downloads_view = DownloadsView(self.dm)
+        layout.addWidget(self.downloads_view)
+
+    def show_at(self, pos: QPoint):
+        # Position it so the top right of the popover is near the click pos
+        # but with some padding
+        adjusted_pos = QPoint(pos.x() - self.width() + 20, pos.y() + 10)
+        self.move(adjusted_pos)
+        self.show()
 
 class MainWindow(QMainWindow):
     def __init__(self, config_manager: ConfigManager):
@@ -36,10 +65,16 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ComicCatcher")
         self.resize(1200, 800)
 
+        # App Icon
+        icon_path = Path(__file__).parent.parent / "resources" / "app.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        
         self.api_client = None
         self.opds_client = None
         self.image_manager = None
         self.download_manager = None
+        self.local_db = LocalLibraryDB(CONFIG_DIR / "library.db")
         
         # Tabbed History State
         self.active_tab = "feed" # "feed" or "search"
@@ -55,48 +90,34 @@ class MainWindow(QMainWindow):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
 
-        # Sidebar
+        # Sidebar (Narrower, Icons + Text Underneath)
         self.sidebar = QFrame()
-        self.sidebar.setFixedWidth(160)
-        self.sidebar.setStyleSheet("background-color: #1e1e1e; color: white;")
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(70)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(0, 20, 0, 5)
+        self.sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        self.sidebar_layout.setSpacing(0)
 
         self.nav_list = QListWidget()
-        self.nav_list.setStyleSheet("""
-            QListWidget {
-                border: none;
-                outline: none;
-                background-color: transparent;
-            }
-            QListWidget::item {
-                padding: 12px;
-                color: #ccc;
-                border-left: 3px solid transparent;
-            }
-            QListWidget::item:selected {
-                background-color: #2d2d2d;
-                color: white;
-                border-left: 3px solid #3791ef;
-            }
-            QListWidget::item:hover {
-                background-color: #252525;
-            }
-        """)
-        self.nav_list.setIconSize(QSize(20, 20))
+        self.nav_list.setObjectName("nav_list") # For specific styling
+        self.nav_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.nav_list.setFlow(QListWidget.Flow.TopToBottom)
+        self.nav_list.setMovement(QListWidget.Movement.Static)
+        self.nav_list.setSpacing(0)
+        self.nav_list.setIconSize(QSize(32, 32))
         
         style = QApplication.instance().style()
         
-        def add_nav_item(text, icon_type):
+        def add_nav_item(text, icon_name):
             item = QListWidgetItem(text)
-            item.setIcon(style.standardIcon(icon_type))
+            item.setIcon(ThemeManager.get_icon(icon_name))
+            item.setSizeHint(QSize(70, 85))
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.nav_list.addItem(item)
 
-        add_nav_item("Servers", QStyle.StandardPixmap.SP_ComputerIcon)
-        add_nav_item("Settings", QStyle.StandardPixmap.SP_FileDialogDetailedView)
-        add_nav_item("Browser", QStyle.StandardPixmap.SP_FileDialogContentsView)
-        add_nav_item("Library", QStyle.StandardPixmap.SP_DirHomeIcon)
-        add_nav_item("Downloads", QStyle.StandardPixmap.SP_ArrowDown)
+        add_nav_item("Feeds", "feeds")
+        add_nav_item("Library", "library")
+        add_nav_item("Settings", "settings")
         
         self.nav_list.currentRowChanged.connect(self._on_sidebar_changed)
         self.sidebar_layout.addWidget(self.nav_list)
@@ -112,26 +133,18 @@ class MainWindow(QMainWindow):
 
         # Debug Bar (at the very top)
         self.debug_bar = QFrame()
+        self.debug_bar.setObjectName("debug_bar")
         self.debug_bar.setFixedHeight(25)
-        self.debug_bar.setStyleSheet("background-color: #1a1a1a; border-bottom: 1px solid #333;")
         self.debug_layout = QHBoxLayout(self.debug_bar)
         self.debug_layout.setContentsMargins(10, 0, 10, 0)
         self.debug_layout.setSpacing(10)
         
         self.history_counter = QLabel("[0/0]")
-        self.history_counter.setStyleSheet("color: #3791ef; font-size: 10px; font-weight: bold;")
+        self.history_counter.setStyleSheet("font-size: 10px; font-weight: bold;")
         
         self.debug_url_text = QLineEdit("")
         self.debug_url_text.setReadOnly(True)
-        self.debug_url_text.setStyleSheet("""
-            QLineEdit {
-                color: #aaa;
-                font-size: 10px;
-                background: transparent;
-                border: none;
-                selection-background-color: #3791ef;
-            }
-        """)
+        self.debug_url_text.setStyleSheet("font-size: 10px; background: transparent; border: none;")
         
         self.btn_logs = QPushButton("Logs")
         self.btn_logs.setFixedSize(40, 18)
@@ -151,45 +164,62 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.debug_bar)
         self.debug_bar.setVisible(os.getenv("DEBUG") == "1")
 
-        # Top Header (Server Info + Tabs + Breadcrumbs)
+        # Top Header (Feed Info + Tabs + Breadcrumbs + Downloads)
         self.top_header = QFrame()
-        self.top_header.setStyleSheet("background-color: #252526; border-bottom: 1px solid #333;")
+        self.top_header.setObjectName("top_header")
         self.header_layout = QVBoxLayout(self.top_header)
         self.header_layout.setContentsMargins(10, 5, 10, 5)
         self.header_layout.setSpacing(5)
 
-        # Row 1: Server Info & Tabs
-        self.server_row = QHBoxLayout()
-        self.server_icon_label = QLabel()
-        self.server_name_label = QLabel("No Server Selected")
-        self.server_name_label.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
+        # Row 1: Feed Info & Tabs & Downloads
+        self.feed_info_row = QHBoxLayout()
+        self.feed_icon_label = QLabel()
+        self.feed_name_label = QLabel("No Feed Selected")
+        self.feed_name_label.setStyleSheet("font-size: 16px; font-weight: bold;")
         
-        self.btn_tab_feed = QPushButton("Feed")
+        self.btn_tab_feed = QPushButton("Browse")
+        self.btn_tab_feed.setObjectName("tab_button")
         self.btn_tab_feed.setCheckable(True)
         self.btn_tab_feed.setChecked(True)
         self.btn_tab_feed.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_feed.clicked.connect(lambda: self._on_tab_clicked("feed"))
-        
+
         self.btn_tab_search = QPushButton("Search")
+        self.btn_tab_search.setObjectName("tab_button")
         self.btn_tab_search.setCheckable(True)
         self.btn_tab_search.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_tab_search.clicked.connect(lambda: self._on_tab_clicked("search"))
         
-        tab_style = """
-            QPushButton { padding: 6px 15px; border: none; font-size: 14px; font-weight: bold; color: #888; background: transparent; }
-            QPushButton:checked { color: white; border-bottom: 2px solid #3791ef; }
-            QPushButton:hover:!checked { color: #ccc; }
-        """
-        self.btn_tab_feed.setStyleSheet(tab_style)
-        self.btn_tab_search.setStyleSheet(tab_style)
+        self.feed_info_row.addWidget(self.feed_icon_label)
+        self.feed_info_row.addWidget(self.feed_name_label)
+        self.feed_info_row.addSpacing(20)
+        self.feed_info_row.addWidget(self.btn_tab_feed)
+        self.feed_info_row.addWidget(self.btn_tab_search)
         
-        self.server_row.addWidget(self.server_icon_label)
-        self.server_row.addWidget(self.server_name_label)
-        self.server_row.addSpacing(20)
-        self.server_row.addWidget(self.btn_tab_feed)
-        self.server_row.addWidget(self.btn_tab_search)
-        self.server_row.addStretch()
-        self.header_layout.addLayout(self.server_row)
+        self.feed_info_row.addStretch()
+        
+        # Global Download Button with Badge
+        self.download_container = QWidget()
+        self.download_layout = QVBoxLayout(self.download_container)
+        self.download_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.btn_downloads = QPushButton()
+        self.btn_downloads.setProperty("flat", "true")
+        self.btn_downloads.setIcon(ThemeManager.get_icon("download"))
+        self.btn_downloads.setFixedSize(32, 32)
+        self.btn_downloads.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_downloads.clicked.connect(self._toggle_downloads_popover)
+        
+        self.download_badge = QLabel("0", self.btn_downloads)
+        self.download_badge.setFixedSize(16, 16)
+        self.download_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.download_badge.setObjectName("download_badge")
+        self.download_badge.move(16, 0)
+        self.download_badge.hide()
+        
+        self.feed_info_row.addWidget(self.btn_downloads)
+        
+        self.header_layout.addLayout(self.feed_info_row)
 
         # Row 2: Breadcrumb Row
         self.breadcrumb_container = QFrame()
@@ -200,9 +230,13 @@ class MainWindow(QMainWindow):
         self.breadcrumb_inner = QWidget()
         self.breadcrumb_items_layout = FlowLayout(self.breadcrumb_inner, spacing=5)
         
-        self.btn_refresh = QPushButton("Refresh")
-        self.btn_refresh.setFixedSize(60, 25)
+        self.btn_refresh = QPushButton()
+        self.btn_refresh.setProperty("flat", "true")
+        self.btn_refresh.setIcon(ThemeManager.get_icon("refresh"))
+        self.btn_refresh.setFixedSize(32, 32)
+        self.btn_refresh.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_refresh.clicked.connect(self.on_manual_refresh)
+        self.btn_refresh.setToolTip("Refresh current view")
         
         self.breadcrumb_row.addWidget(self.breadcrumb_inner, 1)
         self.breadcrumb_row.addWidget(self.btn_refresh, 0, Qt.AlignmentFlag.AlignTop)
@@ -216,9 +250,9 @@ class MainWindow(QMainWindow):
         self.main_layout.addWidget(self.content_stack)
 
         # Initialize Views
-        self.servers_view = ServersView(self.config_manager, self.on_profile_selected)
-        self.servers_view.icon_loaded.connect(self._on_server_icon_loaded)
+        self.feed_list_view = FeedListView(self.config_manager, self.on_feed_selected)
         self.settings_view = SettingsView(self.config_manager)
+        self.settings_view.theme_changed.connect(self._apply_theme)
         
         # Dual Browser Views
         self.feed_browser_view = BrowserView(self.config_manager, self.on_open_detail, self.on_navigate_to_url, on_offset_change=self._on_browser_offset_changed)
@@ -230,28 +264,109 @@ class MainWindow(QMainWindow):
             on_clear=self._on_clear_search
         )
         
-        self.local_library_view = LocalLibraryView(self.config_manager, self.on_open_local_comic)
-        self.local_detail_view = LocalComicDetailView(self.on_back_to_local_library, self.on_read_local_comic)
-        self.local_reader_view = LocalReaderView(self.on_exit_reader)
+        self.local_library_view = LocalLibraryView(self.config_manager, self.on_open_local_comic, self.local_db)
+        self.local_detail_view = LocalComicDetailView(self.on_back_to_local_library, self.on_read_local_comic, self.local_db)
+        self.local_reader_view = LocalReaderView(self.on_exit_reader, self.local_db)
         
         self.detail_view = DetailView(self.config_manager, self.on_back_to_browser, self.on_read_book, self.on_navigate_to_url, self.on_start_download, self.on_open_detail)
         self.reader_view = ReaderView(self.config_manager, self.on_exit_reader)
-        self.downloads_view = DownloadsView(None)
+        
+        # Global Download Manager
+        self.download_manager = DownloadManager(None, self.config_manager.get_library_dir())
+        self.download_manager.set_callback(self._on_downloads_updated)
+        self._last_completed_count = 0
+        self.downloads_popover = None
 
-        self.content_stack.addWidget(self.servers_view)        # 0
-        self.content_stack.addWidget(self.settings_view)       # 1
-        self.content_stack.addWidget(self.feed_browser_view)   # 2
-        self.content_stack.addWidget(self.local_library_view)  # 3
-        self.content_stack.addWidget(self.downloads_view)      # 4
-        self.content_stack.addWidget(self.local_detail_view)   # 5
-        self.content_stack.addWidget(self.local_reader_view)   # 6
-        self.content_stack.addWidget(self.detail_view)         # 7
-        self.content_stack.addWidget(self.reader_view)         # 8
-        self.content_stack.addWidget(self.search_root_view)    # 9
-        self.content_stack.addWidget(self.search_browser_view) # 10
+        # Stack Indices:
+        # 0: Feed List (Root of Feeds)
+        # 1: Library
+        # 2: Settings
+        # 3: Feed Browser
+        # 4: Local Detail
+        # 5: Local Reader
+        # 6: Online Detail
+        # 7: Online Reader
+        # 8: Search Root
+        # 9: Search Browser
+        self.content_stack.addWidget(self.feed_list_view)     # 0
+        self.content_stack.addWidget(self.local_library_view)# 1
+        self.content_stack.addWidget(self.settings_view)     # 2
+        self.content_stack.addWidget(self.feed_browser_view) # 3
+        self.content_stack.addWidget(self.local_detail_view) # 4
+        self.content_stack.addWidget(self.local_reader_view) # 5
+        self.content_stack.addWidget(self.detail_view)       # 6
+        self.content_stack.addWidget(self.reader_view)       # 7
+        self.content_stack.addWidget(self.search_root_view)  # 8
+        self.content_stack.addWidget(self.search_browser_view)# 9
 
-        self.nav_list.setCurrentRow(0)
-        self.update_header()
+        self.feed_list_view.icon_loaded.connect(self._on_feed_icon_loaded)
+        self.settings_view.feed_management.icon_loaded.connect(self._on_feed_icon_loaded)
+
+        # Apply initial theme
+        self._apply_theme()
+
+        # Restore last state
+        QTimer.singleShot(0, self._restore_last_state)
+
+    def _apply_theme(self):
+        theme_name = self.config_manager.get_theme()
+        ThemeManager.apply_theme(QApplication.instance(), theme_name)
+        # Force all widgets to re-evaluate the new stylesheet
+        app = QApplication.instance()
+        for widget in app.allWidgets():
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.update()
+        # Refresh icons that were set at construction time with the old theme color
+        icon_map = ["feeds", "library", "settings"]
+        for i, icon_name in enumerate(icon_map):
+            item = self.nav_list.item(i)
+            if item:
+                item.setIcon(ThemeManager.get_icon(icon_name))
+        self.btn_refresh.setIcon(ThemeManager.get_icon("refresh"))
+        self.btn_downloads.setIcon(ThemeManager.get_icon("download"))
+        self.local_library_view.refresh_icons()
+        self.settings_view.feed_management.refresh_feeds()
+
+    def _restore_last_state(self):
+        vtype = self.config_manager.get_last_view_type()
+        if vtype == "library":
+            self.nav_list.setCurrentRow(1)
+            self._on_sidebar_changed(1)
+        elif vtype == "feed":
+            feed_id = self.config_manager.get_last_feed_id()
+            feed = None
+            if feed_id:
+                feed = self.config_manager.get_feed(feed_id)
+            
+            if feed:
+                self.on_feed_selected(feed)
+            else:
+                self.nav_list.setCurrentRow(0)
+                self._on_sidebar_changed(0)
+        else:
+            self.nav_list.setCurrentRow(0)
+            self._on_sidebar_changed(0)
+
+    def _on_downloads_updated(self):
+        # Update badge
+        active_count = sum(1 for t in self.download_manager.tasks.values() if t.status in ("Downloading", "Pending"))
+        if active_count > 0:
+            self.download_badge.setText(str(active_count))
+            self.download_badge.show()
+        else:
+            self.download_badge.hide()
+
+        # Check for new completions to refresh library
+        completed_count = sum(1 for t in self.download_manager.tasks.values() if t.status == "Completed")
+        if completed_count > self._last_completed_count:
+            logger.info(f"Download completion detected: {completed_count} total. Refreshing library.")
+            self.local_library_view.set_dirty()
+        self._last_completed_count = completed_count
+
+    def _on_feed_icon_loaded(self, feed_id, pixmap):
+        if self.api_client and self.api_client.profile.id == feed_id:
+            self.feed_icon_label.setPixmap(pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def get_current_history(self):
         if self.active_tab == "search":
@@ -267,13 +382,33 @@ class MainWindow(QMainWindow):
             self.feed_index = index
 
     def _on_sidebar_changed(self, index):
-        if index == 2:
-            # We clicked "Browser" in the sidebar
-            self._on_tab_clicked(self.active_tab)
+        # Sidebar mapping:
+        # 0: Feeds
+        # 1: Library
+        # 2: Settings
+        
+        if index == 0:
+            self.config_manager.set_last_view_type("feed")
+            hist, idx = self.get_current_history()
+            if idx < 0:
+                 self.content_stack.setCurrentIndex(0) # Feed List
+            else:
+                 self._on_tab_clicked(self.active_tab)
+            self.update_header()
             return
             
-        self.content_stack.setCurrentIndex(index)
-        self.top_header.setVisible(index not in (6, 8))
+        if index == 1:
+            self.config_manager.set_last_view_type("library")
+            
+        # Re-map index for stacked widget (Skip index 3 which is now feed browser)
+        target = index
+        if index > 0:
+            # index 1 (Library) -> 1
+            # index 2 (Settings) -> 2
+            pass
+            
+        self.content_stack.setCurrentIndex(target)
+        self.update_header()
 
     def _on_tab_clicked(self, tab_name):
         self.active_tab = tab_name
@@ -283,24 +418,25 @@ class MainWindow(QMainWindow):
         hist, idx = self.get_current_history()
         
         if tab_name == "search" and (not hist or hist[idx]["type"] == "search_root"):
-            self.content_stack.setCurrentIndex(9) # Search Root
+            self.content_stack.setCurrentIndex(8) # Search Root
             if self.api_client:
-                p = self.api_client.profile
-                self.search_root_view.update_data(p.search_history, p.pinned_searches)
+                f = self.api_client.profile
+                self.search_root_view.update_data(f.search_history, f.pinned_searches)
             self.search_root_view.search_input.setFocus()
         elif idx >= 0:
             entry = hist[idx]
             if entry["type"] == "browser":
                 if tab_name == "feed":
-                    self.content_stack.setCurrentIndex(2)
+                    self.content_stack.setCurrentIndex(3)
                     self.feed_browser_view.setFocus()
                 else:
-                    self.content_stack.setCurrentIndex(10)
+                    self.content_stack.setCurrentIndex(9)
                     self.search_browser_view.setFocus()
             elif entry["type"] == "detail":
-                # Detail view is shared, re-render it
                 self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager)
-                self.content_stack.setCurrentIndex(7)
+                self.content_stack.setCurrentIndex(6)
+        else:
+            self.content_stack.setCurrentIndex(0)
                 
         self.update_header()
 
@@ -309,16 +445,10 @@ class MainWindow(QMainWindow):
         if idx >= 0 and hist[idx]["type"] == "browser":
             hist[idx]["offset"] = offset
 
-    def _on_server_icon_loaded(self, profile_id, pixmap):
-        # Update server icon in header if active
-        if self.api_client and self.api_client.profile.id == profile_id:
-            self.server_icon_label.setPixmap(pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-
     def update_header(self):
-        # 1. Update Debug Bar (independent of header visibility)
         is_debug_on = os.getenv("DEBUG") == "1"
         current_view_idx = self.content_stack.currentIndex()
-        is_reader = current_view_idx in (6, 8)
+        is_reader = current_view_idx in (5, 7) # LocalReader, OnlineReader
         
         self.debug_bar.setVisible(is_debug_on and not is_reader)
         
@@ -329,43 +459,60 @@ class MainWindow(QMainWindow):
                 active_entry = hist[idx]
                 url_val = active_entry.get("url", "")
                 self.debug_url_text.setText(url_val)
-                self.debug_url_text.setCursorPosition(0) # Keep start visible
-                self.debug_url_text.setToolTip(url_val)
+                self.debug_url_text.setCursorPosition(0)
             else:
                 self.debug_url_text.setText("")
 
-        # 2. Clear existing breadcrumbs
+        # Clear breadcrumbs
         while self.breadcrumb_items_layout.count():
             layout_item = self.breadcrumb_items_layout.takeAt(0)
             if layout_item.widget():
                 layout_item.widget().deleteLater()
         
-        # 3. Determine if Main Header (Tabs/Breadcrumbs) should be visible
-        # Only visible in Browser, Detail, or Search views
-        show_main_header = not is_reader and current_view_idx in (2, 7, 9, 10)
-        self.top_header.setVisible(show_main_header)
+        # Show header everywhere except the reader
+        show_header = not is_reader
+        self.top_header.setVisible(show_header)
         
-        if not show_main_header:
+        if not show_header:
+            return
+
+        # Determine if we are in a "Feed Context" (Browsing or searching a feed)
+        in_feed_context = current_view_idx in (3, 6, 8, 9)
+        
+        # Toggle visibility of feed-specific header parts
+        self.feed_icon_label.setVisible(in_feed_context)
+        self.feed_name_label.setVisible(in_feed_context)
+        self.btn_tab_feed.setVisible(in_feed_context)
+        self.btn_tab_search.setVisible(in_feed_context)
+        self.breadcrumb_container.setVisible(in_feed_context)
+
+        if not in_feed_context:
             return
         
         style = QApplication.instance().style()
 
-        # 4. Build breadcrumbs
+        # Build breadcrumbs (only in feed context)
+        # Root "Feeds" link
+        btn_root = QPushButton("Feeds")
+        btn_root.setFlat(True)
+        btn_root.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_root.setObjectName("breadcrumb_dim")
+        btn_root.clicked.connect(self.back_to_feed_list)
+        self.breadcrumb_items_layout.addWidget(btn_root)
+        
+        sep = QLabel(">")
+        sep.setObjectName("breadcrumb_sep")
+        self.breadcrumb_items_layout.addWidget(sep)
+
         for i, entry in enumerate(hist):
             title = entry.get("title", "...")
-            
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
             item_layout.setContentsMargins(0, 0, 0, 0)
             item_layout.setSpacing(5)
             
             if i == 0:
-                # First breadcrumb gets a tab-specific icon
-                if self.active_tab == "feed":
-                    icon = style.standardIcon(QStyle.StandardPixmap.SP_DirHomeIcon)
-                else:
-                    icon = style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
-                
+                icon = ThemeManager.get_icon("library") if self.active_tab == "feed" else ThemeManager.get_icon("feeds")
                 if i == idx:
                     icon_label = QLabel()
                     icon_label.setPixmap(icon.pixmap(16, 16))
@@ -381,85 +528,101 @@ class MainWindow(QMainWindow):
             else:
                 if i == idx:
                     label = QLabel(title)
-                    label.setStyleSheet("font-weight: bold; color: #3791ef; font-size: 14px;")
+                    label.setObjectName("breadcrumb_active")
                     item_layout.addWidget(label)
                 else:
                     btn = QPushButton(title)
                     btn.setFlat(True)
                     btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                    btn.setStyleSheet("text-align: left; padding: 2px; color: #ccc; font-size: 14px;")
+                    btn.setObjectName("breadcrumb_dim")
                     btn.clicked.connect(lambda _, x=i: self.on_jump_to_history(x))
                     item_layout.addWidget(btn)
             
             self.breadcrumb_items_layout.addWidget(item_widget)
-                
             if i < len(hist) - 1:
                 sep = QLabel(">")
-                sep.setStyleSheet("color: #666;")
+                sep.setObjectName("breadcrumb_sep")
                 self.breadcrumb_items_layout.addWidget(sep)
 
-        # 5. Force layout refresh
         self.breadcrumb_inner.updateGeometry()
         self.top_header.updateGeometry()
 
-    def on_profile_selected(self, profile):
-        from api.client import APIClient
-        from api.opds_v2 import OPDS2Client
-        from api.image_manager import ImageManager
+    def back_to_feed_list(self):
+        self.api_client = None
+        self.opds_client = None
+        self.image_manager = None
+        # Keep download_manager alive if downloads are running
+        self.feed_history = []
+        self.feed_index = -1
+        self.search_history = []
+        self.search_index = -1
+        self.feed_name_label.setText("No Feed Selected")
+        self.feed_icon_label.clear()
+        self.content_stack.setCurrentIndex(0)
+        self.update_header()
+
+    def on_feed_selected(self, feed):
+        self.config_manager.set_last_view_type("feed")
+        self.config_manager.set_last_feed_id(feed.id)
         
-        self.api_client = APIClient(profile)
+        self.api_client = APIClient(feed)
         self.opds_client = OPDS2Client(self.api_client)
         self.image_manager = ImageManager(self.api_client)
-        self.download_manager = DownloadManager(self.api_client, self.config_manager.get_library_dir())
         
-        self.feed_browser_view.load_profile(profile)
-        self.search_browser_view.load_profile(profile)
+        # Update Download Manager's client
+        self.download_manager.api_client = self.api_client
+            
+        self.feed_browser_view.set_feed_context(feed)
+        self.search_browser_view.set_feed_context(feed)
         self.reader_view.api_client = self.api_client
-        self.downloads_view.dm = self.download_manager
-        self.download_manager.set_callback(self.downloads_view.refresh_tasks)
         
-        # Initialize isolated histories
-        base_url = profile.url
+        base_url = feed.url
         start_url = base_url if "opds" in base_url.lower() else urljoin(base_url, "/codex/opds/v2.0/")
         
-        self.feed_history = [{"type": "browser", "title": "Home", "url": start_url, "offset": 0, "profile_id": profile.id}]
+        self.feed_history = [{"type": "browser", "title": "Home", "url": start_url, "offset": 0, "feed_id": feed.id}]
         self.feed_index = 0
-        self.search_history = [{"type": "search_root", "title": "Search", "profile_id": profile.id}]
+        self.search_history = [{"type": "search_root", "title": "Search", "feed_id": feed.id}]
         self.search_index = 0
         self.active_tab = "feed"
         
-        # Populate Search Dash
-        self.search_root_view.update_data(profile.search_history, profile.pinned_searches)
+        self.search_root_view.update_data(feed.search_history, feed.pinned_searches)
+        self.feed_name_label.setText(feed.name)
         
-        # Set Header Identity
-        self.server_name_label.setText(profile.name)
-        icon = getattr(profile, "_cached_icon", None)
-        if icon:
-            self.server_icon_label.setPixmap(icon.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        # Check if icon is cached on the feed profile
+        icon_pixmap = getattr(feed, "_cached_icon", None)
+        if icon_pixmap:
+            self.feed_icon_label.setPixmap(icon_pixmap.scaled(24, 24, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         else:
-            style = QApplication.instance().style()
-            self.server_icon_label.setPixmap(style.standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon).pixmap(24, 24))
-            if not profile.icon_url:
-                asyncio.create_task(self.servers_view.discover_and_save_icon(profile))
+            self.feed_icon_label.setPixmap(ThemeManager.get_icon("feeds").pixmap(24, 24))
         
-        self.nav_list.setCurrentRow(2) # Switches to Browser view routing
-        # Manually trigger load for the root
         asyncio.create_task(self.feed_browser_view.load_feed(start_url, "Home"))
-        self.content_stack.setCurrentIndex(2)
+        self.content_stack.setCurrentIndex(3)
         self.update_header()
+
+    def _toggle_downloads_popover(self):
+        if not self.download_manager:
+            return
+            
+        if not self.downloads_popover:
+            self.downloads_popover = DownloadPopover(self, self.download_manager)
+            
+        if self.downloads_popover.isVisible():
+            self.downloads_popover.hide()
+        else:
+            # Map button global pos
+            btn_pos = self.btn_downloads.mapToGlobal(QPoint(0, self.btn_downloads.height()))
+            self.downloads_popover.show_at(btn_pos)
 
     async def _execute_search(self, query: str):
         if not self.api_client: return
-        p = self.api_client.profile
+        f = self.api_client.profile
         
-        # 1. Update Search History (Move to front if dupe)
-        if query in p.search_history:
-            p.search_history.remove(query)
-        p.search_history.insert(0, query)
-        p.search_history = p.search_history[:50] # Cap at 50
-        self.config_manager.update_profile(p)
+        if query in f.search_history:
+            f.search_history.remove(query)
+        f.search_history.insert(0, query)
+        f.search_history = f.search_history[:50]
+        self.config_manager.update_feed(f)
 
-        # We need to find the search template URL. Load root feed via feed tab's start url (first entry)
         if not self.feed_history: return
         start_url = self.feed_history[0]["url"]
         
@@ -474,7 +637,7 @@ class MainWindow(QMainWindow):
                     break
             
             if not search_link:
-                QMessageBox.warning(self, "Search", "Search is not supported by this server.")
+                QMessageBox.warning(self, "Search", "Search is not supported by this feed.")
                 return
                 
             safe_query = urllib.parse.quote(query)
@@ -486,76 +649,59 @@ class MainWindow(QMainWindow):
                 search_url = f"{search_link}?query={safe_query}"
                 
             full_search_url = urljoin(start_url, search_url)
-            
-            ic = self.feed_history[0].get("icon") if self.feed_history else None
-            pid = self.feed_history[0].get("profile_id") if self.feed_history else None
-            
-            self.on_navigate_to_url(full_search_url, title=f"Search: '{query}'", icon=ic, profile_id=pid)
+            self.on_navigate_to_url(full_search_url, title=f"Search: '{query}'")
             
         except Exception as e:
             QMessageBox.warning(self, "Search Error", f"Could not perform search: {e}")
 
     def _on_pin_search(self, query):
         if not self.api_client: return
-        p = self.api_client.profile
-        if query in p.pinned_searches:
-            p.pinned_searches.remove(query)
+        f = self.api_client.profile
+        if query in f.pinned_searches:
+            f.pinned_searches.remove(query)
         else:
-            p.pinned_searches.append(query)
-        self.config_manager.update_profile(p)
-        self.search_root_view.update_data(p.search_history, p.pinned_searches)
+            f.pinned_searches.append(query)
+        self.config_manager.update_feed(f)
+        self.search_root_view.update_data(f.search_history, f.pinned_searches)
 
     def _on_remove_search(self, query, from_pinned):
         if not self.api_client: return
-        p = self.api_client.profile
+        f = self.api_client.profile
         if from_pinned:
-            if query in p.pinned_searches:
-                p.pinned_searches.remove(query)
+            if query in f.pinned_searches:
+                f.pinned_searches.remove(query)
         else:
-            if query in p.search_history:
-                p.search_history.remove(query)
-        self.config_manager.update_profile(p)
-        self.search_root_view.update_data(p.search_history, p.pinned_searches)
+            if query in f.search_history:
+                f.search_history.remove(query)
+        self.config_manager.update_feed(f)
+        self.search_root_view.update_data(f.search_history, f.pinned_searches)
 
     def _on_clear_search(self):
         if not self.api_client: return
-        p = self.api_client.profile
-        p.search_history.clear()
-        self.config_manager.update_profile(p)
-        self.search_root_view.update_data(p.search_history, p.pinned_searches)
+        f = self.api_client.profile
+        f.search_history.clear()
+        self.config_manager.update_feed(f)
+        self.search_root_view.update_data(f.search_history, f.pinned_searches)
 
-    def on_navigate_to_url(self, url, title="Loading...", replace=False, keep_title=False, icon=None, profile_id=None):
+    def on_navigate_to_url(self, url, title="Loading...", replace=False, keep_title=False, icon=None, feed_id=None):
         hist, idx = self.get_current_history()
-        
         if replace and idx >= 0:
             hist[idx]["url"] = url
             if not keep_title:
                 hist[idx]["title"] = title
-            if icon:
-                hist[idx]["icon"] = icon
         else:
             if idx < len(hist) - 1:
                 hist = hist[:idx + 1]
-
-            pid = profile_id
-            if not pid and idx >= 0:
-                pid = hist[idx].get("profile_id")
-                
-            ic = icon if len(hist) == 0 else None
-
             hist.append({
                 "type": "browser", 
                 "title": title, 
                 "url": url, 
-                "pub": None, 
-                "icon": ic,
-                "profile_id": pid,
                 "offset": 0
             })
             idx = len(hist) - 1
             
         self.set_current_history(hist, idx)
-        self.content_stack.setCurrentIndex(10 if self.active_tab == "search" else 2)
+        self.content_stack.setCurrentIndex(9 if self.active_tab == "search" else 3)
         self.update_header()
         
         browser = self.search_browser_view if self.active_tab == "search" else self.feed_browser_view
@@ -566,20 +712,15 @@ class MainWindow(QMainWindow):
         hist, idx = self.get_current_history()
         if idx < len(hist) - 1:
             hist = hist[:idx + 1]
-
-        pid = hist[idx].get("profile_id") if idx >= 0 else None
-
         hist.append({
             "type": "detail", 
             "title": pub.metadata.title, 
             "url": self_url, 
-            "pub": pub,
-            "profile_id": pid
+            "pub": pub
         })
         idx = len(hist) - 1
         self.set_current_history(hist, idx)
-        
-        self.content_stack.setCurrentIndex(7)
+        self.content_stack.setCurrentIndex(6)
         self.update_header()
         self.detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager)
 
@@ -587,14 +728,13 @@ class MainWindow(QMainWindow):
         hist, _ = self.get_current_history()
         hist = hist[:index + 1]
         self.set_current_history(hist, index)
-        
         entry = hist[index]
         if entry["type"] == "browser":
-            self.content_stack.setCurrentIndex(10 if self.active_tab == "search" else 2)
+            self.content_stack.setCurrentIndex(9 if self.active_tab == "search" else 3)
         elif entry["type"] == "search_root":
-            self.content_stack.setCurrentIndex(9)
+            self.content_stack.setCurrentIndex(8)
         else:
-            self.content_stack.setCurrentIndex(7)
+            self.content_stack.setCurrentIndex(6)
             
         self.update_header()
         
@@ -604,8 +744,8 @@ class MainWindow(QMainWindow):
             browser.setFocus()
         elif entry["type"] == "search_root":
             if self.api_client:
-                p = self.api_client.profile
-                self.search_root_view.update_data(p.search_history, p.pinned_searches)
+                f = self.api_client.profile
+                self.search_root_view.update_data(f.search_history, f.pinned_searches)
             self.search_root_view.search_input.setFocus()
         else:
             self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager)
@@ -619,16 +759,14 @@ class MainWindow(QMainWindow):
             asyncio.create_task(browser.load_feed(entry["url"], entry["title"], force_refresh=True, initial_offset=entry.get("offset", 0)))
         elif entry["type"] == "search_root":
             if self.api_client:
-                p = self.api_client.profile
-                self.search_root_view.update_data(p.search_history, p.pinned_searches)
+                f = self.api_client.profile
+                self.search_root_view.update_data(f.search_history, f.pinned_searches)
         else:
-            # Detail View
             self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager, force_refresh=True)
 
     def _copy_url_to_clipboard(self):
         url = self.debug_url_text.text()
-        if url:
-            QApplication.clipboard().setText(url)
+        if url: QApplication.clipboard().setText(url)
 
     def _show_logs_dialog(self):
         dialog = QDialog(self)
@@ -638,14 +776,9 @@ class MainWindow(QMainWindow):
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setStyleSheet("font-family: monospace; font-size: 10px; background-color: #1e1e1e; color: #ddd;")
-        try:
-            if os.path.exists("comiccatcher.log"):
-                with open("comiccatcher.log", "r") as f:
-                    text_edit.setPlainText("".join(f.readlines()[-200:]))
-            else:
-                text_edit.setPlainText("Log file not found.")
-        except Exception as e:
-            text_edit.setPlainText(f"Error reading logs: {e}")
+        if os.path.exists("comiccatcher.log"):
+            with open("comiccatcher.log", "r") as f:
+                text_edit.setPlainText("".join(f.readlines()[-200:]))
         layout.addWidget(text_edit)
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(dialog.accept)
@@ -654,21 +787,22 @@ class MainWindow(QMainWindow):
 
     def on_read_book(self, pub, manifest_url):
         self.reader_view.load_manifest(pub, manifest_url)
-        self.content_stack.setCurrentIndex(8)
+        self.content_stack.setCurrentIndex(7)
         self.sidebar.hide()
         self.top_header.hide()
 
     def on_start_download(self, pub, url):
         if self.download_manager:
-            asyncio.create_task(self.download_manager.start_download(pub.id, pub.metadata.title, url))
-            self.nav_list.setCurrentRow(4)
+            asyncio.create_task(self.download_manager.start_download(pub.identifier, pub.metadata.title, url))
+            # Instead of switching tab, we show the popover to show progress
+            self._toggle_downloads_popover()
 
     def on_open_local_comic(self, path):
         self.local_detail_view.load_path(path)
-        self.content_stack.setCurrentIndex(5)
+        self.content_stack.setCurrentIndex(4)
 
     def on_back_to_local_library(self):
-        self.content_stack.setCurrentIndex(3)
+        self.content_stack.setCurrentIndex(1)
 
     def on_back_to_browser(self):
         hist, idx = self.get_current_history()
@@ -677,19 +811,19 @@ class MainWindow(QMainWindow):
                 self.on_jump_to_history(i)
                 return
         self.nav_list.setCurrentRow(0)
+        self.content_stack.setCurrentIndex(0)
 
     def on_read_local_comic(self, path):
         self.local_reader_view.load_cbz(path)
-        self.content_stack.setCurrentIndex(6)
+        self.content_stack.setCurrentIndex(5)
         self.sidebar.hide()
         self.top_header.hide()
 
     def on_exit_reader(self):
         self.sidebar.show()
         self.top_header.show()
-        if self.content_stack.currentIndex() == 6:
-            self.content_stack.setCurrentIndex(5)
+        if self.content_stack.currentIndex() == 5:
+            self.content_stack.setCurrentIndex(4)
         else:
-            self.content_stack.setCurrentIndex(7)
-            # Refresh to show new progress
+            self.content_stack.setCurrentIndex(6)
             self.on_manual_refresh()

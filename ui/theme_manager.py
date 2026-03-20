@@ -1,0 +1,327 @@
+import os
+from pathlib import Path
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QColor, QPalette, QIcon
+
+ICON_DIR = Path(__file__).parent.parent / "resources" / "icons"
+
+THEMES = {
+    "light": {
+        "bg_main": "#f5f6f8",
+        "bg_sidebar": "#e8ecf0",
+        "bg_header": "#ffffff",
+        "bg_item_hover": "#dde3ea",
+        "bg_item_selected": "#c8ddf8",
+        "text_main": "#1a1d21",
+        "text_dim": "#5a6270",
+        "accent": "#0052a3",
+        "border": "#c8cdd4",
+        "card_bg": "#ffffff"
+    },
+    "dark": {
+        "bg_main": "#1e1e1e",
+        "bg_sidebar": "#2d2d2d",
+        "bg_header": "#252526",
+        "bg_item_hover": "#3e3e42",
+        "bg_item_selected": "#264f78",
+        "text_main": "#e1e1e1",
+        "text_dim": "#969696",
+        "accent": "#007fd4",
+        "border": "#333333",
+        "card_bg": "#252526"
+    },
+    "oled": {
+        "bg_main": "#000000",
+        "bg_sidebar": "#000000",
+        "bg_header": "#000000",
+        "bg_item_hover": "#1a1a1a",
+        "bg_item_selected": "#007fd4",
+        "text_main": "#ffffff",
+        "text_dim": "#aaaaaa",
+        "accent": "#007fd4",
+        "border": "#404040",
+        "card_bg": "#000000"
+    },
+    "blue": {
+        "bg_main": "#0f172a",
+        "bg_sidebar": "#1e293b",
+        "bg_header": "#1e293b",
+        "bg_item_hover": "#334155",
+        "bg_item_selected": "#0ea5e9",
+        "text_main": "#f1f5f9",
+        "text_dim": "#94a3b8",
+        "accent": "#0ea5e9",
+        "border": "#334155",
+        "card_bg": "#1e293b"
+    },
+    "light_blue": {
+        "bg_main": "#f0f7ff",
+        "bg_sidebar": "#e1effe",
+        "bg_header": "#ffffff",
+        "bg_item_hover": "#d1e9ff",
+        "bg_item_selected": "#bfdbfe",
+        "text_main": "#1e3a8a",
+        "text_dim": "#3b82f6",
+        "accent": "#1d4ed8",
+        "border": "#bfdbfe",
+        "card_bg": "#ffffff"
+    }
+}
+
+class ThemeManager:
+    _current_theme: str = "dark"
+
+    @classmethod
+    def get_icon(cls, name: str) -> QIcon:
+        path = ICON_DIR / f"{name}.svg"
+        if not path.exists():
+            return QIcon()
+        theme = THEMES.get(cls._current_theme, THEMES["dark"])
+        color = theme["text_main"]
+        try:
+            from PyQt6.QtCore import QByteArray
+            from PyQt6.QtGui import QPixmap
+            svg = path.read_bytes()
+            svg = svg.replace(b'stroke="white"', f'stroke="{color}"'.encode())
+            svg = svg.replace(b'fill="white"', f'fill="{color}"'.encode())
+            pixmap = QPixmap()
+            if pixmap.loadFromData(QByteArray(svg), "SVG"):
+                return QIcon(pixmap)
+        except Exception:
+            pass
+        return QIcon(str(path))
+
+    @classmethod
+    def apply_theme(cls, app: QApplication, theme_name: str):
+        cls._current_theme = theme_name
+        theme = THEMES.get(theme_name, THEMES["dark"])
+        
+        stylesheet = f"""
+            QMainWindow, QDialog {{
+                background-color: {theme['bg_main']};
+                color: {theme['text_main']};
+            }}
+            
+            QWidget {{
+                color: {theme['text_main']};
+            }}
+            
+            QLabel {{
+                color: {theme['text_main']};
+            }}
+            
+            QHeaderView::section {{
+                background-color: {theme['bg_header']};
+                color: {theme['text_dim']};
+                padding: 4px;
+                border: none;
+                border-bottom: 1px solid {theme['border']};
+            }}
+            
+            QListView, QTreeView, QListWidget {{
+                background-color: {theme['bg_main']};
+                border: none;
+                outline: none;
+            }}
+            
+            QListView::item {{
+                padding: 8px;
+                border-radius: 4px;
+            }}
+            
+            QListView::item:hover {{
+                background-color: {theme['bg_item_hover']};
+            }}
+            
+            QListWidget::item:selected {{
+                background-color: {theme['bg_item_selected']};
+                color: {theme['accent']};
+            }}
+            
+            QPushButton {{
+                background-color: {theme['bg_item_hover']};
+                color: {theme['text_main']};
+                border: 1px solid {theme['border']};
+                padding: 6px 12px;
+                border-radius: 4px;
+            }}
+            
+            QPushButton:hover {{
+                border-color: {theme['accent']};
+                background-color: {theme['bg_item_selected']};
+            }}
+
+            QPushButton[flat="true"] {{
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+
+            QPushButton#tab_button {{
+                background-color: {theme['bg_item_hover']};
+                color: {theme['text_dim']};
+                border: 1px solid {theme['border']};
+                border-radius: 4px;
+                padding: 3px 12px;
+                font-size: 13px;
+            }}
+
+            QPushButton#tab_button:hover {{
+                background-color: {theme['bg_item_selected']};
+                color: {theme['text_main']};
+            }}
+
+            QPushButton#tab_button:checked {{
+                background-color: {theme['accent']};
+                color: white;
+                border-color: {theme['accent']};
+                font-weight: bold;
+            }}
+            
+            QComboBox {{
+                background-color: {theme['bg_item_hover']};
+                border: 1px solid {theme['border']};
+                color: {theme['text_main']};
+                padding: 4px;
+                border-radius: 4px;
+            }}
+            
+            QLineEdit, QTextEdit {{
+                background-color: {theme['bg_item_hover']};
+                border: 1px solid {theme['border']};
+                color: {theme['text_main']};
+                padding: 4px;
+                border-radius: 4px;
+            }}
+            
+            QGroupBox {{
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
+                margin-top: 12px;
+                font-weight: bold;
+                background-color: {theme['bg_main']};
+            }}
+
+            QGroupBox::title {{
+                color: {theme['accent']};
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 3px 0 3px;
+            }}
+            
+            QScrollBar:vertical {{
+                border: none;
+                background: {theme['bg_main']};
+                width: 10px;
+                margin: 0px;
+            }}
+            
+            QScrollBar::handle:vertical {{
+                background: {theme['border']};
+                min-height: 20px;
+                border-radius: 5px;
+            }}
+            
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            
+            QProgressBar {{
+                border: none;
+                background-color: {theme['bg_item_hover']};
+                height: 4px;
+                text-align: center;
+            }}
+            
+            QProgressBar::chunk {{
+                background-color: {theme['accent']};
+            }}
+            
+            QPushButton#primary_button {{
+                background-color: {theme['accent']};
+                color: white;
+                font-weight: bold;
+                border: 1px solid {theme['accent']};
+                border-radius: 4px;
+                padding: 10px 24px;
+            }}
+
+            QPushButton#primary_button:hover {{
+                background-color: white;
+                color: {theme['accent']};
+                border: 1px solid {theme['accent']};
+            }}
+
+            QPushButton#primary_button:disabled {{
+                background-color: {theme['border']};
+                color: {theme['text_dim']};
+                border: none;
+            }}
+            
+            QFrame#badge {{
+                background-color: rgba(128, 128, 128, 30);
+                border-radius: 10px;
+                border: 1px solid rgba(128, 128, 128, 50);
+            }}
+            
+            QFrame#badge:hover {{
+                background-color: rgba(128, 128, 128, 50);
+                border: 1px solid {theme['accent']};
+            }}
+
+            QGroupBox QWidget {{
+                background-color: transparent;
+            }}
+
+            QRadioButton::indicator {{
+                width: 14px;
+                height: 14px;
+                border-radius: 7px;
+                border: 2px solid {theme['border']};
+                background-color: transparent;
+            }}
+
+            QLabel#breadcrumb_active {{
+                font-weight: bold;
+                color: {theme['accent']};
+            }}
+            
+            QPushButton#breadcrumb_dim {{
+                color: {theme['text_dim']};
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+            
+            QPushButton#breadcrumb_dim:hover {{
+                color: {theme['text_main']};
+                text-decoration: underline;
+            }}
+            
+            QLabel#breadcrumb_sep {{
+                color: {theme['border']};
+                font-weight: bold;
+            }}
+        """
+        app.setStyleSheet(stylesheet)
+        
+        # Also set palette for some native widgets
+        palette = QPalette()
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.Window, QColor(theme['bg_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.WindowText, QColor(theme['text_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.Base, QColor(theme['bg_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.AlternateBase, QColor(theme['bg_sidebar']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.ToolTipBase, QColor(theme['bg_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.ToolTipText, QColor(theme['text_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.Text, QColor(theme['text_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.Button, QColor(theme['bg_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.ButtonText, QColor(theme['text_main']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.BrightText, QColor(theme['accent']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.Highlight, QColor(theme['accent']))
+        palette.setColor(QPalette.ColorGroup.All, QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        app.setPalette(palette)

@@ -3,7 +3,7 @@ import os
 import uuid
 from typing import List, Optional
 from pathlib import Path
-from models.server import ServerProfile
+from models.feed import FeedProfile
 
 APP_NAME = "comiccatcher"
 DEFAULT_LIBRARY_DIR = Path.home() / "ComicCatcher"
@@ -25,21 +25,26 @@ def get_config_dir() -> Path:
     return Path.home() / f".{APP_NAME}"
 
 CONFIG_DIR = get_config_dir()
-PROFILES_FILE = CONFIG_DIR / "profiles.json"
+FEEDS_FILE = CONFIG_DIR / "feeds.json"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
 CACHE_DIR = CONFIG_DIR / "cache"
 DOWNLOADS_DIR = CONFIG_DIR / "downloads"  # legacy; use library_dir for new downloads
 
 class ConfigManager:
     def __init__(self):
-        self.profiles: List[ServerProfile] = []
+        self.feeds: List[FeedProfile] = []
         self.settings = {
             "scroll_method": "continuous",  # "continuous", "paging", or "refit"
-            # Local library folder (downloaded / imported comics).
             "library_dir": str(DEFAULT_LIBRARY_DIR),
+            "show_labels": True,
+            "library_view_mode": 0, # 0: Folders, 1: Series, 2: Alpha, etc.
+            "last_view_type": "library", # "library" or "feed"
+            "last_feed_id": None,
+            "last_folder_path": None,
+            "theme": "dark", # "light", "dark", "oled", "blue"
         }
         self._ensure_dirs()
-        self.load_profiles()
+        self.load_feeds()
         self.load_settings()
         self._ensure_library_dir()
 
@@ -55,25 +60,37 @@ class ConfigManager:
             # Don't crash the app for an invalid/unwritable folder; keep the setting.
             pass
 
-    def load_profiles(self):
-        if not PROFILES_FILE.exists():
-            self.profiles = []
+    def load_feeds(self):
+        # Migration: Check for old profiles.json if feeds.json doesn't exist
+        OLD_PROFILES_FILE = CONFIG_DIR / "profiles.json"
+        
+        target_file = FEEDS_FILE
+        if not FEEDS_FILE.exists() and OLD_PROFILES_FILE.exists():
+             target_file = OLD_PROFILES_FILE
+             
+        if not target_file.exists():
+            self.feeds = []
             return
+            
         try:
-            with open(PROFILES_FILE, 'r', encoding='utf-8') as f:
+            with open(target_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                self.profiles = [ServerProfile(**p) for p in data]
+                self.feeds = [FeedProfile(**p) for p in data]
+            
+            # If we migrated, save to new file
+            if target_file == OLD_PROFILES_FILE:
+                self.save_feeds()
         except Exception as e:
-            print(f"Error loading profiles: {e}")
-            self.profiles = []
+            print(f"Error loading feeds: {e}")
+            self.feeds = []
 
-    def save_profiles(self):
+    def save_feeds(self):
         try:
-            with open(PROFILES_FILE, 'w', encoding='utf-8') as f:
-                data = [p.model_dump() for p in self.profiles]
+            with open(FEEDS_FILE, 'w', encoding='utf-8') as f:
+                data = [f.model_dump() for f in self.feeds]
                 json.dump(data, f, indent=4)
         except Exception as e:
-            print(f"Error saving profiles: {e}")
+            print(f"Error saving feeds: {e}")
 
     def get_device_id(self) -> str:
         if "device_id" not in self.settings:
@@ -105,6 +122,48 @@ class ConfigManager:
         self.settings["scroll_method"] = method
         self.save_settings()
 
+    def get_theme(self) -> str:
+        return self.settings.get("theme", "dark")
+
+    def set_theme(self, theme: str):
+        self.settings["theme"] = theme
+        self.save_settings()
+
+    def get_show_labels(self) -> bool:
+        return self.settings.get("show_labels", True)
+
+    def set_show_labels(self, val: bool):
+        self.settings["show_labels"] = val
+        self.save_settings()
+
+    def get_library_view_mode(self) -> int:
+        return self.settings.get("library_view_mode", 0)
+
+    def set_library_view_mode(self, mode: int):
+        self.settings["library_view_mode"] = mode
+        self.save_settings()
+
+    def get_last_view_type(self) -> str:
+        return self.settings.get("last_view_type", "library")
+
+    def set_last_view_type(self, vtype: str):
+        self.settings["last_view_type"] = vtype
+        self.save_settings()
+
+    def get_last_feed_id(self) -> Optional[str]:
+        return self.settings.get("last_feed_id")
+
+    def set_last_feed_id(self, feed_id: Optional[str]):
+        self.settings["last_feed_id"] = feed_id
+        self.save_settings()
+
+    def get_last_folder_path(self) -> Optional[str]:
+        return self.settings.get("last_folder_path")
+
+    def set_last_folder_path(self, path: Optional[str]):
+        self.settings["last_folder_path"] = path
+        self.save_settings()
+
     def get_library_dir(self) -> Path:
         val = self.settings.get("library_dir") or str(DEFAULT_LIBRARY_DIR)
         try:
@@ -118,8 +177,8 @@ class ConfigManager:
         self.save_settings()
         self._ensure_library_dir()
 
-    def add_profile(self, name: str, url: str, username: Optional[str] = None, password: Optional[str] = None, token: Optional[str] = None) -> ServerProfile:
-        profile = ServerProfile(
+    def add_feed(self, name: str, url: str, username: Optional[str] = None, password: Optional[str] = None, token: Optional[str] = None) -> FeedProfile:
+        feed = FeedProfile(
             id=str(uuid.uuid4()),
             name=name,
             url=url,
@@ -127,23 +186,24 @@ class ConfigManager:
             password=password,
             bearer_token=token
         )
-        self.profiles.append(profile)
-        self.save_profiles()
-        return profile
+        self.feeds.append(feed)
+        self.save_feeds()
+        return feed
 
-    def update_profile(self, profile: ServerProfile):
-        for i, p in enumerate(self.profiles):
-            if p.id == profile.id:
-                self.profiles[i] = profile
-                self.save_profiles()
+    def update_feed(self, feed: FeedProfile):
+        for i, f in enumerate(self.feeds):
+            if f.id == feed.id:
+                self.feeds[i] = feed
+                self.save_feeds()
                 return
 
-    def remove_profile(self, profile_id: str):
-        self.profiles = [p for p in self.profiles if p.id != profile_id]
-        self.save_profiles()
+    def remove_feed(self, feed_id: str):
+        self.feeds = [f for f in self.feeds if f.id != feed_id]
+        self.save_feeds()
 
-    def get_profile(self, profile_id: str) -> Optional[ServerProfile]:
-        for p in self.profiles:
-            if p.id == profile_id:
-                return p
+    def get_feed(self, feed_id: str) -> Optional[FeedProfile]:
+        for f in self.feeds:
+            if f.id == feed_id:
+                return f
         return None
+

@@ -1,9 +1,9 @@
 import httpx
 from typing import Optional, Dict, Any
-from models.server import ServerProfile
+from models.feed import FeedProfile
 
 class APIClient:
-    def __init__(self, profile: ServerProfile):
+    def __init__(self, profile: FeedProfile):
         self.profile = profile
         self.client = httpx.AsyncClient(
             base_url=self.profile.get_base_url(), 
@@ -21,8 +21,6 @@ class APIClient:
             self.client.auth = httpx.BasicAuth(self.profile.username, self.profile.password)
 
     async def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> httpx.Response:
-        if self.client is None:
-            print(f"CRITICAL: self.client is None in APIClient.get for {endpoint}!")
         return await self.client.get(endpoint, params=params)
 
     async def post(self, endpoint: str, json: Optional[Dict[str, Any]] = None) -> httpx.Response:

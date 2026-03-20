@@ -1,140 +1,125 @@
 import asyncio
-import traceback
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from urllib.parse import urljoin
 
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QFrame
-)
-from PyQt6.QtCore import Qt, QEvent
-from PyQt6.QtGui import QPixmap, QKeyEvent, QPainter
+from PyQt6.QtGui import QPixmap
 
 from logger import get_logger
-from api.client import APIClient
 from api.image_manager import ImageManager
 from api.progression import ProgressionSync
 from models.opds import Publication
+from ui.base_reader import BaseReaderView
 
 logger = get_logger("ui.reader")
 
-class ReaderView(QWidget):
+
+class ReaderView(BaseReaderView):
     """
-    High-performance streaming OPDS reader using QGraphicsView.
+    OPDS streaming reader.
+
+    Fetches pages via ImageManager (3-tier cache), syncs reading progression
+    via the Readium Locator API.
     """
+
     def __init__(self, config_manager, on_exit):
-        super().__init__()
+        super().__init__(on_exit)
         self.config_manager = config_manager
-        self.on_exit = on_exit
-        self.api_client = None
-        self.image_manager = None
-        self.progression_sync = None
-        self.progression_url = None
-        
-        self._current_pub = None
-        self._manifest_url = None
-        self._reading_order = []
-        self._index = 0
-        self._prefetch_set = set()
+        self.api_client    = None
+        self.image_manager: Optional[ImageManager] = None
+        self.progression_sync: Optional[ProgressionSync] = None
+        self.progression_url: Optional[str] = None
+
+        self._current_pub: Optional[Publication] = None
+        self._manifest_url: Optional[str] = None
+        self._reading_order: list = []
         self._load_token = 0
+        self._prefetch_set: set[str] = set()
 
-        self.setStyleSheet("background-color: black; color: white;")
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
+        # Wire thumbnail loader so the slider can pull pages on demand
+        self.thumb_slider.set_thumb_loader(self._load_page_pixmap)
 
-        # Header
-        self.header = QFrame()
-        self.header.setStyleSheet("background-color: rgba(0, 0, 0, 180);")
-        self.header_layout = QHBoxLayout(self.header)
-        
-        self.btn_back = QPushButton("Back")
-        self.btn_back.clicked.connect(self.on_exit)
-        
-        self.title_label = QLabel("Loading...")
-        self.title_label.setStyleSheet("font-weight: bold;")
-        
-        self.counter_label = QLabel("0 / 0")
-        
-        self.header_layout.addWidget(self.btn_back)
-        self.header_layout.addWidget(self.title_label, 1)
-        self.header_layout.addWidget(self.counter_label)
-        self.layout.addWidget(self.header)
+    # ------------------------------------------------------------------ #
+    # BaseReaderView interface                                             #
+    # ------------------------------------------------------------------ #
 
-        # Graphics View
-        self.scene = QGraphicsScene()
-        self.view = QGraphicsView(self.scene)
-        self.view.setFrameShape(QFrame.Shape.NoFrame)
-        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.view.setStyleSheet("border: none; background-color: black;")
-        
-        self.pixmap_item = QGraphicsPixmapItem()
-        self.scene.addItem(self.pixmap_item)
-        self.layout.addWidget(self.view, 1)
+    async def _load_page_pixmap(self, idx: int) -> Optional[QPixmap]:
+        if not self._reading_order or idx >= len(self._reading_order):
+            return None
+        item = self._reading_order[idx]
+        href = item.get("href", "")
+        base = self.api_client.profile.get_base_url()
+        url  = href if href.startswith("http") else urljoin(base, href)
 
-        # Footer
-        self.footer = QFrame()
-        self.footer.setStyleSheet("background-color: rgba(0, 0, 0, 180);")
-        self.footer_layout = QHBoxLayout(self.footer)
-        
-        self.btn_prev = QPushButton("Previous")
-        self.btn_prev.clicked.connect(self.prev_page)
-        self.btn_next = QPushButton("Next")
-        self.btn_next.clicked.connect(self.next_page)
-        
-        self.footer_layout.addWidget(self.btn_prev)
-        self.footer_layout.addStretch()
-        self.footer_layout.addWidget(self.btn_next)
-        self.layout.addWidget(self.footer)
+        # Populate disk cache then load via path (avoids base64 decode overhead)
+        await self.image_manager.get_image_b64(url)
+        path = self.image_manager._get_cache_path(url)
+        if path.exists():
+            pm = QPixmap(str(path))
+            return pm if not pm.isNull() else None
+        return None
 
-        self.view.viewport().installEventFilter(self)
+    async def _do_prefetch(self, idx: int):
+        if not self._reading_order or idx >= len(self._reading_order):
+            return
+        item = self._reading_order[idx]
+        href = item.get("href", "")
+        base = self.api_client.profile.get_base_url()
+        url  = href if href.startswith("http") else urljoin(base, href)
+        if url in self._prefetch_set:
+            return
+        self._prefetch_set.add(url)
+        try:
+            await self.image_manager.get_image_b64(url)
+        except Exception:
+            pass
+        finally:
+            self._prefetch_set.discard(url)
 
-    def eventFilter(self, source, event):
-        if event.type() == QEvent.Type.Resize and source is self.view.viewport():
-            self._fit_image()
-        return super().eventFilter(source, event)
+    def _on_page_changed(self, idx: int):
+        if not self.progression_url or not self._reading_order or self._total == 0:
+            return
+        item = self._reading_order[idx]
+        href = item.get("href", "")
+        pct  = 1.0 if idx == self._total - 1 else idx / self._total
+        asyncio.create_task(self.progression_sync.update_progression(
+            self.progression_url,
+            fraction=pct,
+            title=item.get("title", f"Page {idx + 1}"),
+            href=href,
+            position=idx + 1,
+            content_type=item.get("type", "image/jpeg"),
+        ))
 
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() in (Qt.Key.Key_Right, Qt.Key.Key_Space, Qt.Key.Key_PageDown):
-            self.next_page()
-        elif event.key() in (Qt.Key.Key_Left, Qt.Key.Key_PageUp):
-            self.prev_page()
-        elif event.key() == Qt.Key.Key_Escape:
-            self.on_exit()
-        super().keyPressEvent(event)
+    # ------------------------------------------------------------------ #
+    # Loading                                                              #
+    # ------------------------------------------------------------------ #
 
     def load_manifest(self, pub: Publication, manifest_url: str):
         self._load_token += 1
-        self._current_pub = pub
+        self._current_pub  = pub
         self._manifest_url = manifest_url
-        self.title_label.setText(pub.metadata.title)
-        self.image_manager = ImageManager(self.api_client)
-        
-        device_id = self.config_manager.get_device_id()
-        self.progression_sync = ProgressionSync(self.api_client, device_id)
         self._reading_order = []
         self._index = 0
         self._prefetch_set.clear()
-        
-        # Initial discovery from pub links
+        self.image_manager    = ImageManager(self.api_client)
+        self.progression_sync = ProgressionSync(
+            self.api_client, self.config_manager.get_device_id()
+        )
         self.progression_url = self._discover_progression_url(pub.links)
-
         asyncio.create_task(self._fetch_and_load(self._load_token))
 
-    def _discover_progression_url(self, links):
+    def _discover_progression_url(self, links) -> Optional[str]:
+        _PROG_RELS = {
+            "http://opds-spec.org/rel/progression",
+            "http://readium.org/rel/progression",
+            "http://librarysimplified.org/terms/rel/state",
+            "http://www.cantook.com/api/progression",
+        }
         for link in (links or []):
-            rel = getattr(link, 'rel', None) or (link.get('rel') if isinstance(link, dict) else None)
+            rel  = getattr(link, "rel", None) or (link.get("rel") if isinstance(link, dict) else None)
             rels = [rel] if isinstance(rel, str) else (rel or [])
-            if any(r in rels for r in [
-                "http://opds-spec.org/rel/progression",
-                "http://readium.org/rel/progression",
-                "http://librarysimplified.org/terms/rel/state", 
-                "http://www.cantook.com/api/progression"
-            ]):
-                href = getattr(link, 'href', None) or (link.get('href') if isinstance(link, dict) else None)
+            if any(r in _PROG_RELS for r in rels):
+                href = getattr(link, "href", None) or (link.get("href") if isinstance(link, dict) else None)
                 if href:
                     return urljoin(self.api_client.profile.get_base_url(), href)
         return None
@@ -142,124 +127,42 @@ class ReaderView(QWidget):
     async def _fetch_and_load(self, token: int):
         try:
             if self._manifest_url:
-                response = await self.api_client.get(self._manifest_url)
-                response.raise_for_status()
-                data = response.json()
+                resp = await self.api_client.get(self._manifest_url)
+                resp.raise_for_status()
+                data = resp.json()
                 if "readingOrder" in data:
                     self._reading_order = data["readingOrder"]
-                
-                # Check for progression link in manifest itself
-                manifest_prog_url = self._discover_progression_url(data.get("links", []))
-                if manifest_prog_url:
-                    self.progression_url = manifest_prog_url
+                # Progression link may live in the manifest itself
+                prog = self._discover_progression_url(data.get("links", []))
+                if prog:
+                    self.progression_url = prog
             elif self._current_pub.readingOrder:
-                self._reading_order = [item.model_dump() for item in self._current_pub.readingOrder]
+                self._reading_order = [
+                    item.model_dump() for item in self._current_pub.readingOrder
+                ]
 
-            if token != self._load_token: return
-
+            if token != self._load_token:
+                return
             if not self._reading_order:
-                logger.error("No pages found")
+                logger.error("No pages found in manifest")
                 return
 
-            # Initial index from progression if available
+            self._setup_reader(self._current_pub.metadata.title, len(self._reading_order))
+
+            # Restore reading position from server progression
             if self.progression_url:
                 prog_data = await self.progression_sync.get_progression(self.progression_url)
                 if prog_data:
-                    # Check for nested Readium Locator structure first
                     loc = prog_data.get("locator", {}).get("locations", {})
-                    pct = loc.get("progression")
+                    pct = loc.get("progression") or prog_data.get("progression")
                     pos = loc.get("position")
-                    
-                    # Fallback to flat structure
-                    if pct is None:
-                        pct = prog_data.get("progression")
-                        
                     if pos is not None and pos > 0:
                         self._index = pos - 1
                     elif pct is not None:
                         self._index = int(pct * len(self._reading_order))
-                        
-                    self._index = min(max(self._index, 0), len(self._reading_order) - 1)
+                    self._index = max(0, min(self._index, len(self._reading_order) - 1))
 
             await self._show_page()
+
         except Exception as e:
             logger.error(f"Error loading manifest: {e}")
-
-    def next_page(self):
-        if self._index < len(self._reading_order) - 1:
-            self._index += 1
-            asyncio.create_task(self._show_page())
-
-    def prev_page(self):
-        if self._index > 0:
-            self._index -= 1
-            asyncio.create_task(self._show_page())
-
-    async def _show_page(self):
-        if not self._reading_order: return
-        
-        idx = self._index
-        total = len(self._reading_order)
-        self.counter_label.setText(f"{idx + 1} / {total}")
-        self.btn_prev.setEnabled(idx > 0)
-        self.btn_next.setEnabled(idx < total - 1)
-
-        item = self._reading_order[idx]
-        href = item.get("href")
-        base = self.api_client.profile.get_base_url()
-        full_url = urljoin(base, href) if not href.startswith("http") else href
-        
-        asset_path = await self.image_manager.get_image_asset_path(full_url)
-        
-        if asset_path and idx == self._index:
-            # Need absolute path for QPixmap
-            from config import CACHE_DIR
-            import hashlib
-            url_hash = hashlib.sha256(full_url.encode("utf-8")).hexdigest()
-            full_cache_path = CACHE_DIR / url_hash[:2] / url_hash
-            
-            if full_cache_path.exists():
-                pixmap = QPixmap(str(full_cache_path))
-                if not pixmap.isNull():
-                    self.pixmap_item.setPixmap(pixmap)
-                    self.scene.setSceneRect(self.pixmap_item.boundingRect())
-                    self._fit_image()
-
-        # Prefetch next 3
-        for i in range(1, 4):
-            nxt = idx + i
-            if nxt < total:
-                n_item = self._reading_order[nxt]
-                n_href = n_item.get("href")
-                n_full = urljoin(base, n_href) if not n_href.startswith("http") else n_href
-                if n_full not in self._prefetch_set:
-                    self._prefetch_set.add(n_full)
-                    asyncio.create_task(self._prefetch_image(n_full))
-
-        # Sync progression
-        if self.progression_url and total > 0:
-            pct = idx / total
-            if idx == total - 1: pct = 1.0
-            
-            p_title = item.get("title", f"Page {idx + 1}")
-            p_type = item.get("type", "image/jpeg")
-            
-            asyncio.create_task(self.progression_sync.update_progression(
-                self.progression_url, 
-                fraction=pct, 
-                title=p_title, 
-                href=href, 
-                position=idx + 1, 
-                content_type=p_type
-            ))
-
-    def _fit_image(self):
-        if self.pixmap_item.pixmap().isNull(): return
-        self.view.fitInView(self.pixmap_item, Qt.AspectRatioMode.KeepAspectRatio)
-
-    async def _prefetch_image(self, url: str):
-        try:
-            await self.image_manager.get_image_b64(url)
-        except: pass
-        finally:
-            self._prefetch_set.discard(url)

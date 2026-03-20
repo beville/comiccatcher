@@ -4,15 +4,17 @@ from typing import Any, Dict, Optional
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QScrollArea, QFrame, QSizePolicy
+    QScrollArea, QFrame, QSizePolicy, QProgressBar
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap, QFont
 
 from logger import get_logger
 from api.image_manager import ImageManager
+from api.local_db import LocalLibraryDB
 from ui.local_archive import read_first_image
 from ui.local_comicbox import flatten_comicbox, read_comicbox_dict, read_comicbox_cover
+from ui.views.base_detail import BaseDetailView
 
 logger = get_logger("ui.library_detail")
 
@@ -20,101 +22,38 @@ def _read_comicbox_meta(path: Path) -> Dict[str, Any]:
     raw = read_comicbox_dict(path)
     return flatten_comicbox(raw)
 
-class LocalComicDetailView(QWidget):
-    def __init__(self, on_back, on_read_local=None):
-        super().__init__()
-        self.on_back = on_back
+class LocalComicDetailView(BaseDetailView):
+    def __init__(self, on_back, on_read_local=None, local_db: Optional[LocalLibraryDB] = None):
+        super().__init__(on_back)
         self.on_read_local = on_read_local
+        self.db = local_db
         self._path: Optional[Path] = None
-        self.image_manager = ImageManager(None)
-
-        self.layout = QVBoxLayout(self)
-
-        # Header
-        self.header = QHBoxLayout()
-        self.btn_back = QPushButton("Back")
-        self.btn_back.clicked.connect(self.on_back)
-        
-        self.title_label = QLabel("Comic Title")
-        self.title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
-        self.title_label.setWordWrap(True)
-        
-        self.btn_read = QPushButton("Read")
-        self.btn_read.setStyleSheet("background-color: #2e7d32; color: white; padding: 8px 16px;")
-        self.btn_read.clicked.connect(self._on_read_clicked)
-        self.btn_read.setEnabled(False)
-
-        self.header.addWidget(self.btn_back)
-        self.header.addWidget(self.title_label, 1)
-        self.header.addWidget(self.btn_read)
-        self.layout.addLayout(self.header)
-
-        # Path Label
-        self.path_label = QLabel("")
-        self.path_label.setStyleSheet("color: gray; font-size: 10px;")
-        self.layout.addWidget(self.path_label)
-
-        self.line = QFrame()
-        self.line.setFrameShape(QFrame.Shape.HLine)
-        self.line.setFrameShadow(QFrame.Shadow.Sunken)
-        self.layout.addWidget(self.line)
-
-        # Content (Cover + Metadata)
-        self.content_layout = QHBoxLayout()
-        
-        # Cover
-        self.cover_label = QLabel()
-        self.cover_label.setFixedSize(300, 450)
-        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cover_label.setStyleSheet("border: 1px solid #444; background-color: #111;")
-        self.cover_label.setScaledContents(True)
-        self.content_layout.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignTop)
-
-        # Metadata Scroll Area
-        self.scroll = QScrollArea()
-        self.scroll.setWidgetResizable(True)
-        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        
-        self.meta_container = QWidget()
-        self.meta_layout = QVBoxLayout(self.meta_container)
-        self.meta_layout.setSpacing(10)
-        self.meta_layout.addStretch()
-        
-        self.scroll.setWidget(self.meta_container)
-        self.content_layout.addWidget(self.scroll, 1)
-
-        self.layout.addLayout(self.content_layout)
 
     def load_path(self, path: Path):
         self._path = Path(path)
-        self.title_label.setText(self._path.stem)
-        self.path_label.setText(str(self._path))
         
+        info_layout = self._setup_main_info_layout()
+        self._add_title(self._path.stem)
+        
+        # Action Button
+        self._add_read_button(self._on_read_clicked, "Read")
+        self.btn_read.setObjectName("primary_button")
         is_cbz = self._path.suffix.lower() == ".cbz"
         self.btn_read.setEnabled(is_cbz)
         
-        # Clear existing meta
-        self._clear_layout(self.meta_layout)
+        # Progression
+        self._add_progression_label()
         
-        self.cover_label.clear()
-        
-        # Load data
+        # Metadata Rows
         asyncio.create_task(self._load_meta(self._path))
+        
+        # Cover
         if is_cbz:
             asyncio.create_task(self._load_cover(self._path))
-
-    def _clear_layout(self, layout):
-        if layout is None: return
-        while layout.count():
-            item = layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-            else:
-                sub_layout = item.layout()
-                if sub_layout:
-                    self._clear_layout(sub_layout)
-                    sub_layout.deleteLater()
+            if self.db:
+                asyncio.create_task(self._load_progress(self._path))
+        else:
+            self.progression_label.hide()
 
     async def _load_meta(self, path: Path):
         try:
@@ -143,38 +82,41 @@ class LocalComicDetailView(QWidget):
         if cache_path.exists() and path == self._path:
             pixmap = QPixmap(str(cache_path))
             if not pixmap.isNull():
-                try:
-                    self.cover_label.setPixmap(pixmap)
-                except RuntimeError:
-                    pass
+                self.cover_label.setPixmap(pixmap)
+
+    async def _load_progress(self, path: Path):
+        try:
+            row = await asyncio.to_thread(self.db.get_comic, str(path.absolute()))
+            if row and path == self._path:
+                r = dict(row)
+                curr = r.get("current_page", 0)
+                total = r.get("page_count", 0)
+                
+                if total > 0:
+                    self.progression_label.show()
+                    self.progression_label.setText(f"Page {curr + 1} of {total}")
+                    self._update_cover_progress(curr, total)
+                    
+                    if curr >= total - 1:
+                        self.progression_label.setText(f"Finished: {total} pages read")
+                        self.btn_read.setText("Read Again")
+                    elif curr > 0:
+                        self.btn_read.setText("Resume Reading")
+                    else:
+                        self.btn_read.setText("Read")
+                else:
+                    self.progression_label.hide()
+                    self.btn_read.setText("Read")
+            else:
+                self.progression_label.hide()
+                self.btn_read.setText("Read")
+        except Exception as e:
+            logger.error(f"Error loading progress: {e}")
+            self.progression_label.hide()
 
     def _render_meta(self, meta: Dict[str, Any]):
-        # Clear stretch
-        if self.meta_layout.count() > 0:
-            item = self.meta_layout.itemAt(self.meta_layout.count()-1)
-            if not item.widget():
-                self.meta_layout.takeAt(self.meta_layout.count()-1)
-
-        def add_row(label, value):
-            if not value: return
-            row = QWidget()
-            row_layout = QHBoxLayout(row)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-            
-            l = QLabel(f"{label}:")
-            l.setFixedWidth(120)
-            l.setStyleSheet("color: gray; font-weight: bold;")
-            
-            v = QLabel(str(value))
-            v.setWordWrap(True)
-            v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            
-            row_layout.addWidget(l)
-            row_layout.addWidget(v, 1)
-            self.meta_layout.addWidget(row)
-
         fields = [
-            ("Title", "title"), ("Series", "series"), ("Issue", "issue"),
+            ("Series", "series"), ("Issue", "issue"),
             ("Volume", "volume"), ("Year", "year"), ("Writer", "writer"),
             ("Penciller", "penciller"), ("Inker", "inker"), ("Colorist", "colorist"),
             ("Letterer", "letterer"), ("Editor", "editor"), ("Publisher", "publisher"),
@@ -182,14 +124,17 @@ class LocalComicDetailView(QWidget):
         ]
         
         for label, key in fields:
-            add_row(label, meta.get(key))
+            self._add_metadata_row(label, meta.get(key))
             
         if meta.get("summary"):
-            add_row("Summary", meta.get("summary"))
+            self._add_metadata_row("Summary", meta.get("summary"))
         elif meta.get("description"):
-            add_row("Summary", meta.get("description"))
+            self._add_metadata_row("Summary", meta.get("description"))
+            
+        # Add path at bottom
+        self._add_metadata_row("File", str(self._path))
 
-        self.meta_layout.addStretch()
+        self.info_layout.addStretch()
 
     def _on_read_clicked(self):
         if self.on_read_local and self._path:
