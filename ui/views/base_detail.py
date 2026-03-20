@@ -73,6 +73,8 @@ class BaseDetailView(QWidget):
     def _setup_main_info_layout(self):
         """Creates the split view: Cover | Metadata"""
         self._clear_layout(self.content_layout)
+        if hasattr(self, 'actions_layout'):
+            delattr(self, 'actions_layout')
         
         self.top_row = QHBoxLayout()
         self.top_row.setSpacing(20)

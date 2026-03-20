@@ -477,23 +477,47 @@ class LocalLibraryView(QWidget):
         self.selection_bar.setObjectName("top_header")
         self.selection_bar.setFixedHeight(50)
         sel_layout = QHBoxLayout(self.selection_bar)
+        sel_layout.setContentsMargins(10, 5, 10, 5)
+        sel_layout.setSpacing(10)
         
         self.btn_sel_cancel = QPushButton("Cancel")
         self.btn_sel_cancel.clicked.connect(lambda: self.toggle_selection_mode(False))
         self.label_sel_count = QLabel("0 items selected")
         self.label_sel_count.setStyleSheet("font-weight: bold;")
 
+        button_style = """
+            QPushButton {
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+        """
+
         self.btn_sel_mark_read = QPushButton("Mark Read")
+        self.btn_sel_mark_read.setStyleSheet(button_style)
         self.btn_sel_mark_read.clicked.connect(self._on_bulk_mark_read)
         self.btn_sel_mark_read.setEnabled(False)
 
         self.btn_sel_mark_unread = QPushButton("Mark Unread")
+        self.btn_sel_mark_unread.setStyleSheet(button_style)
         self.btn_sel_mark_unread.clicked.connect(self._on_bulk_mark_unread)
         self.btn_sel_mark_unread.setEnabled(False)
 
         self.btn_sel_delete = QPushButton("Delete Selected")
-        self.btn_sel_delete.setObjectName("primary_button")
-        self.btn_sel_delete.setStyleSheet("background-color: #d32f2f; color: white; border-color: #b71c1c;") # Make it red for delete
+        self.btn_sel_delete.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f; 
+                color: white; 
+                border: 1px solid #b71c1c;
+                padding: 4px 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:disabled {
+                background-color: #552222;
+                color: #888;
+                border-color: #441111;
+            }
+        """)
         self.btn_sel_delete.clicked.connect(self._on_bulk_delete)
         self.btn_sel_delete.setEnabled(False)
         

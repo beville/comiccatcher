@@ -168,8 +168,8 @@ class MainWindow(QMainWindow):
         self.top_header = QFrame()
         self.top_header.setObjectName("top_header")
         self.header_layout = QVBoxLayout(self.top_header)
-        self.header_layout.setContentsMargins(10, 5, 10, 5)
-        self.header_layout.setSpacing(5)
+        self.header_layout.setContentsMargins(10, 8, 10, 8)
+        self.header_layout.setSpacing(12)
 
         # Row 1: Feed Info & Tabs & Downloads
         self.feed_info_row = QHBoxLayout()
@@ -583,8 +583,10 @@ class MainWindow(QMainWindow):
             
             self.breadcrumb_items_layout.addWidget(feed_breadcrumb)
             
-            # Note: NO separator here yet, as the history index 0 (Home/Search icon) follows immediately
-            # making it look like part of the feed identity.
+            # Add a separator after the feed name
+            sep = QLabel(">")
+            sep.setObjectName("breadcrumb_sep")
+            self.breadcrumb_items_layout.addWidget(sep)
 
         # 2. History steps
         for i, entry in enumerate(hist):
