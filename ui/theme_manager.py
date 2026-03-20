@@ -14,6 +14,7 @@ THEMES = {
         "bg_item_selected": "#c8ddf8",
         "text_main": "#1a1d21",
         "text_dim": "#5a6270",
+        "text_selected": "#004bb0",
         "accent": "#004bb0",
         "border": "#c8cdd4",
         "card_bg": "#ffffff"
@@ -26,6 +27,7 @@ THEMES = {
         "bg_item_selected": "#264f78",
         "text_main": "#e1e1e1",
         "text_dim": "#a0a0a0",
+        "text_selected": "#ffffff",
         "accent": "#007fd4",
         "border": "#333333",
         "card_bg": "#252526"
@@ -38,6 +40,7 @@ THEMES = {
         "bg_item_selected": "#007fd4",
         "text_main": "#ffffff",
         "text_dim": "#bbbbbb",
+        "text_selected": "#ffffff",
         "accent": "#007fd4",
         "border": "#404040",
         "card_bg": "#000000"
@@ -50,6 +53,7 @@ THEMES = {
         "bg_item_selected": "#0ea5e9",
         "text_main": "#f1f5f9",
         "text_dim": "#94a3b8",
+        "text_selected": "#ffffff",
         "accent": "#0ea5e9",
         "border": "#334155",
         "card_bg": "#1e293b"
@@ -62,6 +66,7 @@ THEMES = {
         "bg_item_selected": "#bfdbfe",
         "text_main": "#1e3a8a",
         "text_dim": "#3b82f6",
+        "text_selected": "#1e3a8a",
         "accent": "#1d4ed8",
         "border": "#bfdbfe",
         "card_bg": "#ffffff"
@@ -132,7 +137,7 @@ class ThemeManager:
             
             QListWidget::item:selected {{
                 background-color: {theme['bg_item_selected']};
-                color: {theme['accent']};
+                color: {theme['text_selected']};
             }}
             
             QPushButton {{
