@@ -17,7 +17,8 @@ THEMES = {
         "text_selected": "#004bb0",
         "accent": "#004bb0",
         "border": "#c8cdd4",
-        "card_bg": "#ffffff"
+        "card_bg": "#ffffff",
+        "white": "#ffffff"
     },
     "dark": {
         "bg_main": "#1e1e1e",
@@ -30,7 +31,8 @@ THEMES = {
         "text_selected": "#ffffff",
         "accent": "#007fd4",
         "border": "#333333",
-        "card_bg": "#252526"
+        "card_bg": "#252526",
+        "white": "#ffffff"
     },
     "oled": {
         "bg_main": "#000000",
@@ -43,7 +45,8 @@ THEMES = {
         "text_selected": "#ffffff",
         "accent": "#007fd4",
         "border": "#404040",
-        "card_bg": "#000000"
+        "card_bg": "#000000",
+        "white": "#ffffff"
     },
     "blue": {
         "bg_main": "#0f172a",
@@ -56,7 +59,8 @@ THEMES = {
         "text_selected": "#ffffff",
         "accent": "#0ea5e9",
         "border": "#334155",
-        "card_bg": "#1e293b"
+        "card_bg": "#1e293b",
+        "white": "#ffffff"
     },
     "light_blue": {
         "bg_main": "#f0f7ff",
@@ -69,7 +73,8 @@ THEMES = {
         "text_selected": "#1e3a8a",
         "accent": "#1d4ed8",
         "border": "#bfdbfe",
-        "card_bg": "#ffffff"
+        "card_bg": "#ffffff",
+        "white": "#ffffff"
     }
 }
 
@@ -278,6 +283,37 @@ class ThemeManager:
                 border: none;
                 background-color: transparent;
             }}
+
+            QSlider#reader_slider {{
+                height: 30px;
+            }}
+
+            QSlider#reader_slider::groove:horizontal {{
+                border: none;
+                height: 4px;
+                background: {theme['bg_item_hover']};
+                margin: 2px 0;
+                border-radius: 2px;
+            }}
+
+            QSlider#reader_slider::handle:horizontal {{
+                background: {theme['accent']};
+                border: 1px solid {theme['accent']};
+                width: 24px;
+                height: 24px;
+                margin: -10px 0;
+                border-radius: 12px;
+            }}
+
+            QSlider#reader_slider::handle:horizontal:hover {{
+                background: {theme['white']};
+                border: 1px solid {theme['white']};
+            }}
+
+            QSlider#reader_slider::sub-page:horizontal {{
+                background: {theme['accent']};
+                border-radius: 2px;
+            }}
             
             QProgressBar {{
                 border: none;
@@ -425,6 +461,29 @@ class ThemeManager:
             QPushButton#nav_link_button:hover, QPushButton#nav_continuous_button:hover {{
                 background-color: {theme['bg_item_hover']};
                 border-radius: 4px;
+            }}
+
+            QMenu {{
+                background-color: {theme['bg_header']};
+                color: {theme['text_main']};
+                border: 1px solid {theme['border']};
+                padding: 5px;
+            }}
+
+            QMenu::item {{
+                padding: 5px 25px 5px 20px;
+                border-radius: 4px;
+            }}
+
+            QMenu::item:selected {{
+                background-color: {theme['bg_item_hover']};
+                color: {theme['accent']};
+            }}
+
+            QMenu::separator {{
+                height: 1px;
+                background-color: {theme['border']};
+                margin: 5px 10px;
             }}
             """
         app.setStyleSheet(stylesheet)

@@ -174,9 +174,9 @@ class MainWindow(QMainWindow):
 
         # Row 1: Feed Info & Tabs & Downloads
         self.feed_info_row = QHBoxLayout()
-        self.btn_back_header = QPushButton("Back")
+        self.btn_back_header = QPushButton()
         self.btn_back_header.setIcon(ThemeManager.get_icon("back"))
-        self.btn_back_header.setIconSize(QSize(18, 18))
+        self.btn_back_header.setIconSize(QSize(20, 20))
         self.btn_back_header.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_back_header.setToolTip("Go back")
         self.btn_back_header.clicked.connect(self._on_header_back_clicked)
@@ -185,7 +185,7 @@ class MainWindow(QMainWindow):
                 background-color: transparent;
                 border: 1px solid transparent;
                 border-radius: 4px;
-                padding: 4px 10px;
+                padding: 4px;
                 font-weight: bold;
                 font-size: 13px;
                 text-align: left;

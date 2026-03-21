@@ -2,6 +2,7 @@ import asyncio
 from typing import Optional
 from urllib.parse import urljoin
 
+from PyQt6.QtCore import QPoint
 from PyQt6.QtGui import QPixmap
 
 from logger import get_logger
@@ -22,7 +23,7 @@ class ReaderView(BaseReaderView):
     """
 
     def __init__(self, config_manager, on_exit, image_manager: ImageManager = None):
-        super().__init__(on_exit)
+        super().__init__(on_exit, image_manager, on_title_clicked=self._on_header_title_clicked)
         self.config_manager = config_manager
         self.api_client    = None
         self.image_manager = image_manager
@@ -37,6 +38,54 @@ class ReaderView(BaseReaderView):
 
         # Wire thumbnail loader so the slider can pull pages on demand
         self.thumb_slider.set_thumb_loader(self._load_page_pixmap)
+
+    def _on_header_title_clicked(self):
+        if not self._current_pub: return
+        
+        m = self._current_pub.metadata
+        
+        # Build credits
+        creds = []
+        for role in ["author", "penciler", "writer", "artist"]:
+            val = getattr(m, role, None)
+            if val:
+                names = [v.name if hasattr(v, 'name') else str(v) for v in (val if isinstance(val, list) else [val])]
+                creds.append(f"{role.capitalize()}: {', '.join(names)}")
+        
+        # Published date (Month Year)
+        pub_date = ""
+        if m.published:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(m.published.replace('Z', '+00:00'))
+                pub_date = dt.strftime("%B %Y")
+            except:
+                pub_date = str(m.published)[:7]
+
+        # Get actual cover from cache if available
+        cover_pixmap = QPixmap()
+        if self._current_pub.images:
+            img_url = self._current_pub.images[0].href
+            full_img_url = urljoin(self._manifest_url or "", img_url)
+            cache_path = self.image_manager._get_cache_path(full_img_url)
+            if cache_path.exists():
+                cover_pixmap.load(str(cache_path))
+
+        data = {
+            "credits": "\n".join(creds),
+            "publisher": m.publisher,
+            "published": pub_date,
+            "summary": m.description
+        }
+        
+        self.meta_popover.populate(cover_pixmap, data)
+        
+        # Position below header
+        hdr_pos = self.header.mapToGlobal(self.header.rect().bottomLeft())
+        # Center horizontally
+        x = hdr_pos.x() + (self.width() - self.meta_popover.width()) // 2
+        y = hdr_pos.y() + 5
+        self.meta_popover.show_at(QPoint(x, y))
 
     # ------------------------------------------------------------------ #
     # BaseReaderView interface                                             #
@@ -95,6 +144,7 @@ class ReaderView(BaseReaderView):
     # ------------------------------------------------------------------ #
 
     def load_manifest(self, pub: Publication, manifest_url: str, image_manager: ImageManager):
+        self.clear_display()
         self._load_token += 1
         self._current_pub  = pub
         self._manifest_url = manifest_url
@@ -147,7 +197,11 @@ class ReaderView(BaseReaderView):
                 logger.error("No pages found in manifest")
                 return
 
-            self._setup_reader(self._current_pub.metadata.title, len(self._reading_order))
+            self._setup_reader(
+                self._current_pub.metadata.title, 
+                len(self._reading_order),
+                self._current_pub.metadata.subtitle
+            )
 
             # Restore reading position from server progression
             if self.progression_url:

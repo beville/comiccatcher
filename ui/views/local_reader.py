@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 
+from PyQt6.QtCore import QPoint
 from PyQt6.QtGui import QPixmap
 
 from logger import get_logger
@@ -21,8 +22,9 @@ class LocalReaderView(BaseReaderView):
     """
 
     def __init__(self, on_exit, image_manager: ImageManager, local_db=None):
-        super().__init__(on_exit)
+        super().__init__(on_exit, image_manager, on_title_clicked=self._on_header_title_clicked)
         self.local_db = local_db
+
         self._path: Optional[Path] = None
         self._pages: list[LocalPage] = []
         self._sem = asyncio.Semaphore(2)
@@ -30,6 +32,48 @@ class LocalReaderView(BaseReaderView):
         self._img_mgr = image_manager
 
         self.thumb_slider.set_thumb_loader(self._load_page_pixmap)
+
+    def _on_header_title_clicked(self):
+        if not self._path or not self.local_db: return
+        
+        # Fetch metadata from DB
+        import sqlite3
+        row = self.local_db.get_comic(str(self._path.absolute()))
+        if not row: return
+        r = dict(row)
+        
+        # Build credits
+        creds = []
+        for role in ["writer", "penciller", "inker", "colorist", "letterer", "editor"]:
+            val = r.get(role)
+            if val:
+                creds.append(f"{role.capitalize()}: {val}")
+        
+        # Published info (Year)
+        pub_info = r.get("year", "")
+        
+        # Get cover pixmap from cache
+        cover_pixmap = QPixmap()
+        cover_url = f"local-cbz://{self._path.absolute()}/_cover_thumb"
+        cache_path = self._img_mgr._get_cache_path(cover_url)
+        if cache_path.exists():
+            cover_pixmap.load(str(cache_path))
+
+        data = {
+            "credits": "\n".join(creds),
+            "publisher": r.get("publisher"),
+            "published": str(pub_info) if pub_info else None,
+            "summary": r.get("summary")
+        }
+        
+        self.meta_popover.populate(cover_pixmap, data)
+        
+        # Position below header
+        hdr_pos = self.header.mapToGlobal(self.header.rect().bottomLeft())
+        # Center horizontally
+        x = hdr_pos.x() + (self.width() - self.meta_popover.width()) // 2
+        y = hdr_pos.y() + 5
+        self.meta_popover.show_at(QPoint(x, y))
 
     # ------------------------------------------------------------------ #
     # BaseReaderView interface                                             #
@@ -57,6 +101,7 @@ class LocalReaderView(BaseReaderView):
     # ------------------------------------------------------------------ #
 
     def load_cbz(self, path: Path):
+        self.clear_display()
         self._path  = Path(path)
         self._pages = []
         self._index = 0
@@ -70,7 +115,7 @@ class LocalReaderView(BaseReaderView):
                 logger.error("No pages found in archive")
                 return
             
-            # Check for saved progress
+            subtitle = None
             if self.local_db:
                 row = await asyncio.to_thread(self.local_db.get_comic, str(self._path.absolute()))
                 if row:
@@ -79,8 +124,16 @@ class LocalReaderView(BaseReaderView):
                     if 0 <= saved_idx < len(pages):
                         self._index = saved_idx
                         logger.info(f"Restoring progress to page {saved_idx}")
+                    
+                    # Build subtitle from metadata
+                    series = r.get("series")
+                    issue = r.get("issue")
+                    if series:
+                        subtitle = series
+                        if issue:
+                            subtitle += f" #{issue}"
             
-            self._setup_reader(self._path.stem, len(pages))
+            self._setup_reader(self._path.stem, len(pages), subtitle)
             await self._show_page()
         except Exception as e:
             logger.error(f"Failed to load CBZ: {e}")

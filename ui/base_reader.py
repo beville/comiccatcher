@@ -14,18 +14,21 @@ Features:
   - Fullscreen: F11 / ⛶ button; Escape exits fullscreen before exiting reader
 """
 
+from __future__ import annotations
 import asyncio
 import enum
-from typing import Optional
+from typing import Optional, Callable
 
-from PyQt6.QtCore import Qt, QEvent, QPoint, QTimer
-from PyQt6.QtGui import QKeyEvent, QPainter, QPixmap
+from PyQt6.QtCore import Qt, QEvent, QPoint, QTimer, QSize
+from PyQt6.QtGui import QKeyEvent, QPainter, QPixmap, QAction, QActionGroup, QColor
 from PyQt6.QtWidgets import (
     QFrame, QGraphicsPixmapItem, QGraphicsScene, QGraphicsView,
-    QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout, QWidget, QMenu,
+    QGraphicsDropShadowEffect, QScrollArea
 )
 
 from logger import get_logger
+from api.image_manager import ImageManager
 
 logger = get_logger("ui.base_reader")
 
@@ -42,10 +45,10 @@ class FitMode(enum.Enum):
 
 
 _FIT_LABELS = {
-    FitMode.FIT_PAGE:   "Fit Page",
-    FitMode.FIT_WIDTH:  "Fit Width",
-    FitMode.FIT_HEIGHT: "Fit Height",
-    FitMode.ORIGINAL:   "1:1",
+    FitMode.FIT_PAGE:   "Fit to Window",
+    FitMode.FIT_WIDTH:  "Full Width",
+    FitMode.FIT_HEIGHT: "Full Height",
+    FitMode.ORIGINAL:   "Original Size",
 }
 _FIT_CYCLE = [FitMode.FIT_PAGE, FitMode.FIT_WIDTH, FitMode.FIT_HEIGHT, FitMode.ORIGINAL]
 
@@ -61,9 +64,9 @@ class PageLayout(enum.Enum):
 
 
 _LAYOUT_LABELS = {
-    PageLayout.SINGLE: "1 Page",
-    PageLayout.DOUBLE: "2 Pages",
-    PageLayout.AUTO:   "Auto",
+    PageLayout.SINGLE: "Single Page",
+    PageLayout.DOUBLE: "Two-Page Spread",
+    PageLayout.AUTO:   "Automatic Layout",
 }
 _LAYOUT_CYCLE = [PageLayout.SINGLE, PageLayout.DOUBLE, PageLayout.AUTO]
 
@@ -79,6 +82,150 @@ def _compose_spread(pm1: QPixmap, pm2: QPixmap) -> QPixmap:
     painter.drawPixmap(pm1.width(), (max_h - pm2.height()) // 2, pm2)
     painter.end()
     return result
+
+
+# ---------------------------------------------------------------------------
+# Mini Detail Popover
+# ---------------------------------------------------------------------------
+
+class MiniDetailPopover(QFrame):
+    """
+    A stylish white-background popover showing comic metadata summary.
+    Designed to be repurposed or used as a dropdown from the header.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        self.setFixedWidth(460)
+        self.setFixedHeight(340)
+        
+        # Main container with white background and rounded corners
+        self.container = QFrame(self)
+        self.container.setObjectName("popover_container")
+        self.container.setStyleSheet("""
+            QFrame#popover_container {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+                border-radius: 12px;
+            }
+            QWidget { 
+                background-color: transparent; 
+            }
+            QLabel { 
+                color: #222222; 
+            }
+            QLabel#meta_label { font-size: 12px; color: #555555; }
+            QLabel#section_title { font-weight: bold; font-size: 16px; color: #111111; }
+            QScrollArea { 
+                border: none; 
+                background-color: transparent; 
+            }
+            QScrollArea > QWidget > QWidget { 
+                background-color: transparent; 
+            }
+        """)
+        
+        # Drop Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(15)
+        shadow.setXOffset(0)
+        shadow.setYOffset(4)
+        shadow.setColor(QColor(0, 0, 0, 80))
+        self.container.setGraphicsEffect(shadow)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.addWidget(self.container)
+        
+        self.content_layout = QHBoxLayout(self.container)
+        self.content_layout.setContentsMargins(20, 20, 20, 20)
+        self.content_layout.setSpacing(25)
+        
+        # Left: Cover
+        self.cover_label = QLabel()
+        self.cover_label.setFixedSize(140, 210)
+        self.cover_label.setScaledContents(True)
+        self.cover_label.setStyleSheet("border: 1px solid #eeeeee; background: #fdfdfd; border-radius: 4px;")
+        self.content_layout.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        
+        # Right: Info
+        self.info_area = QWidget()
+        self.info_layout = QVBoxLayout(self.info_area)
+        self.info_layout.setContentsMargins(0, 0, 0, 0)
+        self.info_layout.setSpacing(8)
+        
+        self.content_layout.addWidget(self.info_area, 1)
+        
+    def populate(self, cover: QPixmap, data: dict, title: str = None):
+        """
+        data expected keys:
+          - credits: str (joined writers/artists)
+          - publisher: str
+          - published: str (Month Year)
+          - summary: str
+        """
+        # Clear info layout
+        while self.info_layout.count():
+            item = self.info_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+            
+        # Title (Optional)
+        if title:
+            t_label = QLabel(title)
+            t_label.setObjectName("section_title")
+            t_label.setWordWrap(True)
+            self.info_layout.addWidget(t_label)
+        
+        # Cover
+        if cover and not cover.isNull():
+            self.cover_label.setPixmap(cover)
+        else:
+            self.cover_label.setText("No Cover")
+            
+        # Credits
+        if data.get("credits"):
+            c_label = QLabel(data["credits"])
+            c_label.setObjectName("meta_label")
+            c_label.setWordWrap(True)
+            self.info_layout.addWidget(c_label)
+            
+        # Pub Info
+        pub_parts = []
+        if data.get("publisher"): pub_parts.append(data["publisher"])
+        if data.get("published"): pub_parts.append(data["published"])
+        
+        if pub_parts:
+            p_label = QLabel(" • ".join(pub_parts))
+            p_label.setObjectName("meta_label")
+            self.info_layout.addWidget(p_label)
+            
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: #eee; min-height: 1px; max-height: 1px; border: none;")
+        self.info_layout.addWidget(line)
+        
+        # Summary (Truncated/Scrollable)
+        if data.get("summary"):
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setStyleSheet("background-color: transparent; border: none;")
+            scroll.viewport().setStyleSheet("background-color: transparent;")
+            s_label = QLabel(data["summary"])
+            s_label.setStyleSheet("font-size: 12px; line-height: 1.4; color: #222222; background-color: transparent;")
+            s_label.setWordWrap(True)
+            s_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+            scroll.setWidget(s_label)
+            self.info_layout.addWidget(scroll, 1)
+        else:
+            self.info_layout.addStretch()
+
+    def show_at(self, pos: QPoint):
+        # Adjust if would go off-screen
+        self.move(pos)
+        self.show()
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +248,7 @@ class ThumbnailSlider(QWidget):
         self._loading: set[int] = set()
         self._thumb_loader = None              # async callable: idx -> Optional[QPixmap]
 
+        self.setFixedHeight(30)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -209,29 +357,37 @@ class BaseReaderView(QWidget):
       - ``_on_page_changed(idx)``            (optional hook, e.g. progression sync)
     """
 
-    OVERLAY_HIDE_MS = 3000
-    CURSOR_HIDE_MS  = 2000
+    OVERLAY_HIDE_MS = 8000
+    CURSOR_HIDE_MS  = 5000
     PREFETCH_AHEAD  = 3
     PREFETCH_BEHIND = 1
 
-    def __init__(self, on_exit):
+    def __init__(self, on_exit, image_manager: ImageManager = None, on_title_clicked: Callable[[], None] = None):
         super().__init__()
         self.on_exit = on_exit
+        self.on_title_clicked = on_title_clicked
         self._index   = 0
         self._total   = 0
         self._fit_mode    = FitMode.FIT_PAGE
         self._page_layout = PageLayout.SINGLE
         self._rtl         = False
         self._overlays_visible = True
+        self._overlays_locked  = False
         self._slider_dragging  = False
         self._thumb_visible    = True
 
         self.setStyleSheet("background-color: black; color: white;")
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # Meta Popover
+        self.meta_popover = MiniDetailPopover(self)
+
 
         # --- Graphics view (fills the whole widget) ---
         self.scene = QGraphicsScene()
         self.view  = QGraphicsView(self.scene)
+        self.view.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.view.setFrameShape(QFrame.Shape.NoFrame)
         self.view.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         self.view.setStyleSheet("border: none; background-color: black;")
@@ -239,6 +395,7 @@ class BaseReaderView(QWidget):
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setMouseTracking(True)
         self.view.viewport().setMouseTracking(True)
+        self.view.viewport().setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self.pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self.pixmap_item)
@@ -250,103 +407,90 @@ class BaseReaderView(QWidget):
 
         # --- Header overlay ---
         self.header = QFrame(self)
+        self.header.setFixedHeight(60)
         self.header.setStyleSheet(
-            "background-color: rgba(0,0,0,210); border-bottom: 1px solid #444;"
+            "background-color: rgba(0,0,0,160); border: none;"
         )
         hdr = QHBoxLayout(self.header)
-        hdr.setContentsMargins(8, 4, 8, 4)
+        hdr.setContentsMargins(10, 5, 10, 5)
+        hdr.setSpacing(15)
 
-        self.btn_back = QPushButton("← Back")
-        self.btn_back.setFixedWidth(70)
+        from ui.theme_manager import ThemeManager
+        self.btn_back = QPushButton()
+        self.btn_back.setIcon(ThemeManager.get_icon("back", "white"))
+        self.btn_back.setFixedSize(36, 36)
+        self.btn_back.setIconSize(QSize(20, 20))
+        self.btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_back.setToolTip("Exit Reader")
         self.btn_back.clicked.connect(self._do_exit)
 
         self.title_label = QLabel("")
-        self.title_label.setStyleSheet("color: white; font-weight: bold; font-size: 13px;")
+        self.title_label.setStyleSheet("color: white; font-weight: bold;")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setTextFormat(Qt.TextFormat.RichText)
+        self.title_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.title_label.mousePressEvent = lambda e: self._on_title_pressed(e)
 
-        self.counter_label = QLabel("0 / 0")
-        self.counter_label.setStyleSheet("color: #aaa; font-size: 12px;")
-        self.counter_label.setFixedWidth(75)
-        self.counter_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
+        self.btn_settings = QPushButton()
+        self.btn_settings.setIcon(ThemeManager.get_icon("settings", "white"))
+        self.btn_settings.setFixedSize(36, 36)
+        self.btn_settings.setIconSize(QSize(22, 22))
+        self.btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_settings.setToolTip("Reader Settings")
+        self.settings_menu = QMenu(self)
+        self.btn_settings.setMenu(self.settings_menu)
+        self._update_settings_menu()
 
-        self.btn_fullscreen = QPushButton("⛶")
-        self.btn_fullscreen.setFixedWidth(32)
+        self.btn_fullscreen = QPushButton()
+        self.btn_fullscreen.setIcon(ThemeManager.get_icon("fullscreen", "white"))
+        self.btn_fullscreen.setFixedSize(36, 36)
+        self.btn_fullscreen.setIconSize(QSize(20, 20))
+        self.btn_fullscreen.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_fullscreen.setToolTip("Toggle fullscreen  [F11]")
         self.btn_fullscreen.clicked.connect(self._toggle_fullscreen)
 
         hdr.addWidget(self.btn_back)
         hdr.addWidget(self.title_label, 1)
-        hdr.addWidget(self.counter_label)
+        hdr.addWidget(self.btn_settings)
         hdr.addWidget(self.btn_fullscreen)
+
+        self.counter_label = QLabel("0 / 0")
+        self.counter_label.setStyleSheet("color: #aaa; font-size: 16px; font-weight: bold;")
+        self.counter_label.setFixedWidth(95)
+        self.counter_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter
+        )
 
         # --- Footer overlay ---
         self.footer = QFrame(self)
         self.footer.setStyleSheet(
-            "background-color: rgba(0,0,0,210); border-top: 1px solid #444;"
+            "background-color: rgba(0,0,0,160); border: none;"
         )
         ftr = QVBoxLayout(self.footer)
         ftr.setContentsMargins(10, 6, 10, 8)
         ftr.setSpacing(5)
 
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(10)
+        
         self.thumb_slider = ThumbnailSlider(self)
         self.thumb_slider.slider.sliderPressed.connect(self._on_slider_pressed)
         self.thumb_slider.slider.sliderReleased.connect(self._on_slider_released)
         self.thumb_slider.slider.valueChanged.connect(self._on_slider_value_changed)
-        ftr.addWidget(self.thumb_slider)
-
-        ctrl = QHBoxLayout()
-        ctrl.setSpacing(8)
+        
+        slider_row.addWidget(self.counter_label)
+        slider_row.addWidget(self.thumb_slider)
+        ftr.addLayout(slider_row)
 
         _btn_css = (
             "QPushButton { background:#333; color:white; border-radius:4px;"
-            " padding:3px 10px; }"
+            " padding:4px; }"
             "QPushButton:hover { background:#555; }"
             "QPushButton:disabled { color:#555; }"
         )
 
-        self.btn_prev = QPushButton("‹ Prev")
-        self.btn_prev.setFixedWidth(70)
-        self.btn_prev.clicked.connect(self._prev)
-
-        self.btn_next = QPushButton("Next ›")
-        self.btn_next.setFixedWidth(70)
-        self.btn_next.clicked.connect(self._next)
-
-        self.btn_fit = QPushButton(_FIT_LABELS[self._fit_mode])
-        self.btn_fit.setFixedWidth(88)
-        self.btn_fit.setToolTip("Cycle fit mode  [F]")
-        self.btn_fit.clicked.connect(self._cycle_fit)
-
-        self.btn_dir = QPushButton("LtR")
-        self.btn_dir.setFixedWidth(50)
-        self.btn_dir.setToolTip("Toggle reading direction  [R]")
-        self.btn_dir.clicked.connect(self._toggle_dir)
-
-        self.btn_layout = QPushButton(_LAYOUT_LABELS[self._page_layout])
-        self.btn_layout.setFixedWidth(72)
-        self.btn_layout.setToolTip("Cycle page layout  [L]")
-        self.btn_layout.clicked.connect(self._cycle_layout)
-
-        self.btn_thumb = QPushButton("Thumbs ✓")
-        self.btn_thumb.setFixedWidth(80)
-        self.btn_thumb.setToolTip("Toggle thumbnail slider")
-        self.btn_thumb.clicked.connect(self._toggle_thumb_slider)
-
-        for b in (self.btn_back, self.btn_prev, self.btn_next, self.btn_fit,
-                  self.btn_dir, self.btn_layout, self.btn_thumb, self.btn_fullscreen):
+        for b in (self.btn_back, self.btn_fullscreen, self.btn_settings):
             b.setStyleSheet(_btn_css)
-
-        ctrl.addWidget(self.btn_prev)
-        ctrl.addStretch()
-        ctrl.addWidget(self.btn_fit)
-        ctrl.addWidget(self.btn_dir)
-        ctrl.addWidget(self.btn_layout)
-        ctrl.addWidget(self.btn_thumb)
-        ctrl.addStretch()
-        ctrl.addWidget(self.btn_next)
-        ftr.addLayout(ctrl)
 
         # --- Timers ---
         self._overlay_timer = QTimer(self)
@@ -396,24 +540,51 @@ class BaseReaderView(QWidget):
     # Activity / overlay visibility                                        #
     # ------------------------------------------------------------------ #
 
-    def _bump_activity(self):
+    def _bump_cursor(self):
         if self.cursor().shape() == Qt.CursorShape.BlankCursor:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+        self._cursor_timer.start()
+
+    def _bump_activity(self):
+        self._bump_cursor()
         if not self._overlays_visible:
             self._show_overlays()
-        self._overlay_timer.start()
-        self._cursor_timer.start()
+        
+        if not self._overlays_locked:
+            self._overlay_timer.start()
+        else:
+            self._overlay_timer.stop()
 
     def _show_overlays(self):
         self._overlays_visible = True
         self.header.setVisible(True)
         self.footer.setVisible(True)
 
+    def _on_title_pressed(self, event):
+        self._bump_cursor()
+        if self.on_title_clicked:
+            self.on_title_clicked()
+
+    def _toggle_overlays_locked(self):
+        self._overlays_locked = not self._overlays_locked
+        self._update_settings_menu()
+        if self._overlays_locked:
+            self._bump_activity() # Ensure they are shown
+        else:
+            self._overlay_timer.start() # Schedule hide
+
     def _hide_overlays(self):
+        if self._slider_dragging:
+            # Don't hide while dragging, restart timer if not locked
+            if not self._overlays_locked:
+                self._overlay_timer.start()
+            return
+            
         self._overlays_visible = False
         self.header.setVisible(False)
         self.footer.setVisible(False)
         self.thumb_slider.hide_popup()
+        self.meta_popover.hide()
 
     # ------------------------------------------------------------------ #
     # Event handling                                                       #
@@ -423,14 +594,19 @@ class BaseReaderView(QWidget):
         t = event.type()
         vp = self.view.viewport()
 
-        if t in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress):
-            self._bump_activity()
+        if t == QEvent.Type.MouseMove:
+            self._bump_cursor() # Just show cursor, don't show overlays
 
         if t == QEvent.Type.Resize and source is vp:
             self._apply_fit()
 
         if t == QEvent.Type.MouseButtonPress and source is vp:
             self._handle_click(event)
+            return True # Consume click
+
+        if t == QEvent.Type.KeyPress:
+            self.keyPressEvent(event)
+            return True # Consume key
 
         if t == QEvent.Type.Wheel and source is vp:
             # Pass through to view's scrollbar in scrollable fit modes
@@ -445,6 +621,7 @@ class BaseReaderView(QWidget):
         return super().eventFilter(source, event)
 
     def _handle_click(self, event):
+        self._bump_cursor() # Restore cursor on any click
         w = self.view.viewport().width()
         x = event.position().x()
         if x < w / 3:
@@ -460,7 +637,7 @@ class BaseReaderView(QWidget):
                 self._bump_activity()
 
     def keyPressEvent(self, event: QKeyEvent):
-        self._bump_activity()
+        self._bump_cursor()
         key = event.key()
 
         # Flip horizontal arrow keys for RtL
@@ -468,10 +645,17 @@ class BaseReaderView(QWidget):
             if   key == Qt.Key.Key_Right: key = Qt.Key.Key_Left
             elif key == Qt.Key.Key_Left:  key = Qt.Key.Key_Right
 
-        if key in (Qt.Key.Key_Right, Qt.Key.Key_Space, Qt.Key.Key_PageDown):
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_PageDown):
             self._next()
         elif key in (Qt.Key.Key_Left, Qt.Key.Key_PageUp):
             self._prev()
+        elif key == Qt.Key.Key_Space:
+            # Space toggles overlays
+            if self._overlays_visible:
+                self._hide_overlays()
+                self._overlay_timer.stop()
+            else:
+                self._bump_activity() # This will show overlays
         elif key == Qt.Key.Key_F11:
             self._toggle_fullscreen()
         elif key == Qt.Key.Key_Escape:
@@ -501,14 +685,15 @@ class BaseReaderView(QWidget):
         self.on_exit()
 
     def _toggle_fullscreen(self):
+        from ui.theme_manager import ThemeManager
         win = self.window()
         if win.isFullScreen():
             win.showNormal()
-            self.btn_fullscreen.setText("⛶")
+            self.btn_fullscreen.setIcon(ThemeManager.get_icon("fullscreen", "white"))
             self.btn_fullscreen.setToolTip("Enter fullscreen  [F11]")
         else:
             win.showFullScreen()
-            self.btn_fullscreen.setText("⊡")
+            self.btn_fullscreen.setIcon(ThemeManager.get_icon("minimize", "white"))
             self.btn_fullscreen.setToolTip("Exit fullscreen  [F11]")
 
     # ------------------------------------------------------------------ #
@@ -543,14 +728,96 @@ class BaseReaderView(QWidget):
             self.counter_label.setText(f"{value + 1} / {self._total}")
 
     # ------------------------------------------------------------------ #
+    # Settings Menu                                                        #
+    # ------------------------------------------------------------------ #
+
+    def _update_settings_menu(self):
+        if not hasattr(self, 'settings_menu'): return
+        self.settings_menu.clear()
+        
+        # 1. Scaling
+        header_scaling = self.settings_menu.addAction("IMAGE SCALING")
+        header_scaling.setEnabled(False)
+        
+        fit_group = QActionGroup(self)
+        for mode in _FIT_CYCLE:
+            label = _FIT_LABELS[mode]
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self._fit_mode == mode)
+            action.triggered.connect(lambda _, m=mode: self._set_fit_mode(m))
+            fit_group.addAction(action)
+            self.settings_menu.addAction(action)
+            
+        self.settings_menu.addSeparator()
+        
+        # 2. Page Layout
+        header_view = self.settings_menu.addAction("DISPLAY MODE")
+        header_view.setEnabled(False)
+        
+        layout_group = QActionGroup(self)
+        for layout in _LAYOUT_CYCLE:
+            label = _LAYOUT_LABELS[layout]
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.setChecked(self._page_layout == layout)
+            action.triggered.connect(lambda _, l=layout: self._set_page_layout(l))
+            layout_group.addAction(action)
+            self.settings_menu.addAction(action)
+            
+        self.settings_menu.addSeparator()
+        
+        # 3. Reading Direction
+        header_dir = self.settings_menu.addAction("READING ORDER")
+        header_dir.setEnabled(False)
+        
+        dir_group = QActionGroup(self)
+        
+        ltr_action = QAction("Left to Right (LtR)", self)
+        ltr_action.setCheckable(True)
+        ltr_action.setChecked(not self._rtl)
+        ltr_action.triggered.connect(lambda: self._set_reading_direction(False))
+        dir_group.addAction(ltr_action)
+        self.settings_menu.addAction(ltr_action)
+        
+        rtl_action = QAction("Right to Left (RtL)", self)
+        rtl_action.setCheckable(True)
+        rtl_action.setChecked(self._rtl)
+        rtl_action.triggered.connect(lambda: self._set_reading_direction(True))
+        dir_group.addAction(rtl_action)
+        self.settings_menu.addAction(rtl_action)
+        
+        self.settings_menu.addSeparator()
+        
+        # 4. Interface / Previews
+        header_ui = self.settings_menu.addAction("INTERFACE")
+        header_ui.setEnabled(False)
+        
+        thumb_action = QAction("Show Navigation Previews", self)
+        thumb_action.setCheckable(True)
+        thumb_action.setChecked(self._thumb_visible)
+        thumb_action.triggered.connect(lambda: self._set_thumbnails_visible(not self._thumb_visible))
+        self.settings_menu.addAction(thumb_action)
+        
+        lock_action = QAction("Keep Controls Visible", self)
+        lock_action.setCheckable(True)
+        lock_action.setChecked(self._overlays_locked)
+        lock_action.triggered.connect(self._toggle_overlays_locked)
+        self.settings_menu.addAction(lock_action)
+
+    # ------------------------------------------------------------------ #
     # Fit mode                                                             #
     # ------------------------------------------------------------------ #
 
+    def _set_fit_mode(self, mode: FitMode):
+        self._fit_mode = mode
+        self._update_settings_menu()
+        self._apply_fit()
+
     def _cycle_fit(self):
         i = _FIT_CYCLE.index(self._fit_mode)
-        self._fit_mode = _FIT_CYCLE[(i + 1) % len(_FIT_CYCLE)]
-        self.btn_fit.setText(_FIT_LABELS[self._fit_mode])
-        self._apply_fit()
+        next_mode = _FIT_CYCLE[(i + 1) % len(_FIT_CYCLE)]
+        self._set_fit_mode(next_mode)
 
     def _apply_fit(self):
         if self.pixmap_item.pixmap().isNull():
@@ -595,43 +862,67 @@ class BaseReaderView(QWidget):
             return PageLayout.DOUBLE if vp.width() > vp.height() else PageLayout.SINGLE
         return self._page_layout
 
+    def _set_page_layout(self, layout: PageLayout):
+        self._page_layout = layout
+        self._update_settings_menu()
+        asyncio.create_task(self._show_page())
+
     def _cycle_layout(self):
         i = _LAYOUT_CYCLE.index(self._page_layout)
-        self._page_layout = _LAYOUT_CYCLE[(i + 1) % len(_LAYOUT_CYCLE)]
-        self.btn_layout.setText(_LAYOUT_LABELS[self._page_layout])
-        asyncio.create_task(self._show_page())
+        next_layout = _LAYOUT_CYCLE[(i + 1) % len(_LAYOUT_CYCLE)]
+        self._set_page_layout(next_layout)
 
     # ------------------------------------------------------------------ #
     # Thumbnail slider toggle                                              #
     # ------------------------------------------------------------------ #
 
-    def _toggle_thumb_slider(self):
-        self._thumb_visible = not self._thumb_visible
+    def _set_thumbnails_visible(self, visible: bool):
+        self._thumb_visible = visible
         self.thumb_slider.setVisible(self._thumb_visible)
         if not self._thumb_visible:
             self.thumb_slider.hide_popup()
-        self.btn_thumb.setText("Thumbs ✓" if self._thumb_visible else "Thumbs")
+        self._update_settings_menu()
         self._layout_overlays()
+
+    def _toggle_thumb_slider(self):
+        self._set_thumbnails_visible(not self._thumb_visible)
 
     # ------------------------------------------------------------------ #
     # Direction                                                            #
     # ------------------------------------------------------------------ #
 
+    def _set_reading_direction(self, rtl: bool):
+        self._rtl = rtl
+        self._update_settings_menu()
+
     def _toggle_dir(self):
-        self._rtl = not self._rtl
-        self.btn_dir.setText("RtL" if self._rtl else "LtR")
+        self._set_reading_direction(not self._rtl)
 
     # ------------------------------------------------------------------ #
     # Page display (called by subclasses after data is ready)             #
     # ------------------------------------------------------------------ #
 
-    def _setup_reader(self, title: str, total: int):
+    def clear_display(self):
+        """Immediately blank the canvas and labels (prevents prior-comic flash)."""
+        self.pixmap_item.setPixmap(QPixmap())
+        self.title_label.setText("")
+        self.counter_label.setText("0 / 0")
+        self.thumb_slider.slider.setRange(0, 0)
+        self.thumb_slider.slider.setValue(0)
+
+    def _setup_reader(self, title: str, total: int, subtitle: str = None):
         """Call once the page list / reading order is known."""
         self._total = total
         self._index = 0
-        self.title_label.setText(title)
+        
+        display_text = f'<span style="font-size: 19px;">{title}</span>'
+        if subtitle:
+            display_text += f'<br/><i style="font-size: 15px; color: #bbb; font-weight: normal;">{subtitle}</i>'
+            
+        self.title_label.setText(display_text)
         self.thumb_slider.slider.setRange(0, max(0, total - 1))
         self.thumb_slider.slider.setValue(0)
+        self.setFocus()
 
     async def _show_page(self):
         idx = self._index
@@ -643,8 +934,6 @@ class BaseReaderView(QWidget):
         idx2      = idx + 1 if double and idx + 1 < self._total else None
         page_desc = (f"{idx + 1}–{idx2 + 1}" if idx2 is not None else str(idx + 1))
         self.counter_label.setText(f"{page_desc} / {self._total}")
-        self.btn_prev.setEnabled(idx > 0)
-        self.btn_next.setEnabled(idx < self._total - 1)
 
         self.thumb_slider.slider.blockSignals(True)
         self.thumb_slider.slider.setValue(idx)
