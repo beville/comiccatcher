@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QLabel, QPushButton, QProgressBar, QComboBox, QStackedWidget,
     QScrollArea, QApplication, QStyledItemDelegate, QStyle,
-    QAbstractItemView
+    QAbstractItemView, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSlot, pyqtSignal, QRect
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QImage, QPixmapCache, QKeyEvent
@@ -180,10 +180,14 @@ class SeriesSection(QWidget):
         layout.setContentsMargins(0, 0, 0, 10) # Less margin
         layout.setSpacing(0)
 
-        self.btn_toggle = QPushButton(f"▼ {title.upper()}")
+        self.btn_toggle = QPushButton()
         self.btn_toggle.setFlat(True)
         self.btn_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_toggle.setObjectName("section_toggle")
+        self.btn_toggle.setStyleSheet("text-align: left; padding-left: 5px;")
+        self.btn_toggle.setFixedHeight(30)
+        self.btn_toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.base_title = title.upper()
         
         layout.addWidget(self.btn_toggle)
         
@@ -193,7 +197,8 @@ class SeriesSection(QWidget):
         self.list_widget.setItemDelegate(self.delegate)
         self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.list_widget.itemDoubleClicked.connect(self.on_item_clicked)
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
         
         icon_w, icon_h = 120, 180
         self.list_widget.setIconSize(QSize(icon_w, icon_h))
@@ -229,14 +234,12 @@ class SeriesSection(QWidget):
             
         layout.addWidget(self.list_widget)
         self.btn_toggle.clicked.connect(self.toggle)
+        self.set_expanded(True)
 
     def set_expanded(self, expanded: bool):
         self.list_widget.setVisible(expanded)
-        text = self.btn_toggle.text()
-        if expanded:
-            self.btn_toggle.setText(text.replace("▶", "▼"))
-        else:
-            self.btn_toggle.setText(text.replace("▼", "▶"))
+        icon = "▼" if expanded else "▶"
+        self.btn_toggle.setText(f"{icon} {self.base_title}")
 
     def toggle(self):
         self.set_expanded(not self.list_widget.isVisible())
@@ -438,10 +441,10 @@ class LocalLibraryView(QWidget):
         self.list_widget.setItemDelegate(self.folders_delegate)
         self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
         self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.list_widget.setSpacing(10)
         self.list_widget.setIconSize(QSize(120, 180))
-        self.list_widget.itemDoubleClicked.connect(self._on_folder_item_double_clicked)
-        self.list_widget.itemClicked.connect(self._on_item_clicked_override)
+        self.list_widget.itemClicked.connect(self._on_folder_item_clicked)
         self.list_widget.itemSelectionChanged.connect(self._update_selection_ui)
         self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_widget.customContextMenuRequested.connect(lambda pos: self._on_item_context_menu(pos, self.list_widget))
@@ -464,11 +467,11 @@ class LocalLibraryView(QWidget):
         self.alpha_list.setItemDelegate(self.alpha_delegate)
         self.alpha_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.alpha_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.alpha_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.alpha_list.setSpacing(10)
         self.alpha_list.setIconSize(QSize(120, 180))
         self.alpha_list.setWordWrap(True)
-        self.alpha_list.itemDoubleClicked.connect(self._on_db_item_double_clicked)
-        self.alpha_list.itemClicked.connect(self._on_item_clicked_override)
+        self.alpha_list.itemClicked.connect(self._on_db_item_clicked)
         self.alpha_list.itemSelectionChanged.connect(self._update_selection_ui)
         self.alpha_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.alpha_list.customContextMenuRequested.connect(lambda pos: self._on_item_context_menu(pos, self.alpha_list))
@@ -552,7 +555,7 @@ class LocalLibraryView(QWidget):
         self.btn_select.setText("Done" if enabled else "Select")
         self.selection_bar.setVisible(enabled)
         
-        mode = QAbstractItemView.SelectionMode.MultiSelection if enabled else QAbstractItemView.SelectionMode.SingleSelection
+        mode = QAbstractItemView.SelectionMode.MultiSelection if enabled else QAbstractItemView.SelectionMode.NoSelection
         self.list_widget.setSelectionMode(mode)
         self.alpha_list.setSelectionMode(mode)
         
@@ -574,9 +577,6 @@ class LocalLibraryView(QWidget):
             self.toggle_selection_mode(False)
         else:
             super().keyPressEvent(event)
-
-    def _on_item_clicked_override(self, item):
-        pass
 
     def _get_all_selected_items(self):
         selected_items = []
@@ -881,7 +881,7 @@ class LocalLibraryView(QWidget):
                 
                 title = f"{group_name}{range_str}".upper()
                 
-                section = SeriesSection(title, rows, self._on_db_item_double_clicked, is_grid=False, image_manager=self.image_manager, meta_sem=self._meta_sem, show_labels=self._show_labels)
+                section = SeriesSection(title, rows, self._on_db_item_clicked, is_grid=False, image_manager=self.image_manager, meta_sem=self._meta_sem, show_labels=self._show_labels)
                 section.list_widget.itemSelectionChanged.connect(self._update_selection_ui)
                 if self._selection_mode:
                     section.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -896,7 +896,7 @@ class LocalLibraryView(QWidget):
             if one_offs:
                 title = f"{len(one_offs)} MISCELLANEOUS"
                 one_offs.sort(key=lambda x: ( (x.get("series") or "").lower(), (x.get("title") or "").lower() ))
-                section = SeriesSection(title, one_offs, self._on_db_item_double_clicked, is_grid=True, image_manager=self.image_manager, meta_sem=self._meta_sem, show_labels=self._show_labels)
+                section = SeriesSection(title, one_offs, self._on_db_item_clicked, is_grid=True, image_manager=self.image_manager, meta_sem=self._meta_sem, show_labels=self._show_labels)
                 section.list_widget.itemSelectionChanged.connect(self._update_selection_ui)
                 if self._selection_mode:
                     section.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
@@ -979,7 +979,7 @@ class LocalLibraryView(QWidget):
                 except Exception:
                     pass
 
-    def _on_folder_item_double_clicked(self, item):
+    def _on_folder_item_clicked(self, item):
         if self._selection_mode:
             return
 
@@ -996,7 +996,7 @@ class LocalLibraryView(QWidget):
                         context.append(p)
             self.on_open_comic(path, context)
 
-    def _on_db_item_double_clicked(self, item):
+    def _on_db_item_clicked(self, item):
         if self._selection_mode:
             return
 

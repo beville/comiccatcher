@@ -962,49 +962,51 @@ class MainWindow(QMainWindow):
 
     async def _on_reader_boundary_reached(self, direction: int):
         """Called by BaseReaderView to get info about the next/prev book in context."""
-        hist, idx = self.get_current_history()
-        if idx < 0: return None
-        entry = hist[idx]
         
         # 1. Online Context
-        if entry["type"] == "detail" and "pub" in entry:
-            pubs = entry.get("context_pubs", [])
-            if not pubs: return None
+        if self.content_stack.currentIndex() == ViewIndex.READER_ONLINE:
+            hist, idx = self.get_current_history()
+            if idx < 0: return None
+            entry = hist[idx]
             
-            # Find current pub index
-            cur_pub = entry["pub"]
-            p_idx = -1
-            for i, p in enumerate(pubs):
-                # Robust comparison: ID then Title
-                if p.identifier and cur_pub.identifier and p.identifier == cur_pub.identifier:
-                    p_idx = i
-                    break
-                if p.metadata.title == cur_pub.metadata.title:
-                    p_idx = i
-                    break
-            
-            if p_idx == -1: return None
-            
-            target_idx = p_idx + direction
-            if 0 <= target_idx < len(pubs):
-                target_pub = pubs[target_idx]
+            if entry["type"] == "detail" and "pub" in entry:
+                pubs = entry.get("context_pubs", [])
+                if not pubs: return None
                 
-                # Get cover from cache
-                pixmap = QPixmap()
-                if target_pub.images:
-                    img_url = target_pub.images[0].href
-                    # Use last loaded url as base
-                    full_img_url = urllib.parse.urljoin(entry["url"], img_url)
-                    cache_path = self.image_manager._get_cache_path(full_img_url)
-                    if cache_path.exists():
-                        pixmap.load(str(cache_path))
+                # Find current pub index
+                cur_pub = entry["pub"]
+                p_idx = -1
+                for i, p in enumerate(pubs):
+                    # Robust comparison: ID then Title
+                    if p.identifier and cur_pub.identifier and p.identifier == cur_pub.identifier:
+                        p_idx = i
+                        break
+                    if p.metadata.title == cur_pub.metadata.title:
+                        p_idx = i
+                        break
                 
-                # Get self_url
-                self_url = next((urllib.parse.urljoin(entry["url"], l.href) for l in target_pub.links if l.rel == "self"), None)
-                if not self_url and target_pub.links:
-                    self_url = urllib.parse.urljoin(entry["url"], target_pub.links[0].href)
+                if p_idx == -1: return None
                 
-                return target_pub.metadata.title, pixmap, (target_pub, self_url)
+                target_idx = p_idx + direction
+                if 0 <= target_idx < len(pubs):
+                    target_pub = pubs[target_idx]
+                    
+                    # Get cover from cache
+                    pixmap = QPixmap()
+                    if target_pub.images:
+                        img_url = target_pub.images[0].href
+                        # Use last loaded url as base
+                        full_img_url = urllib.parse.urljoin(entry["url"], img_url)
+                        cache_path = self.image_manager._get_cache_path(full_img_url)
+                        if cache_path.exists():
+                            pixmap.load(str(cache_path))
+                    
+                    # Get self_url
+                    self_url = next((urllib.parse.urljoin(entry["url"], l.href) for l in target_pub.links if l.rel == "self"), None)
+                    if not self_url and target_pub.links:
+                        self_url = urllib.parse.urljoin(entry["url"], target_pub.links[0].href)
+                    
+                    return target_pub.metadata.title, pixmap, (target_pub, self_url)
 
         # 2. Local Context
         # Check both the content stack and the entry to see if we are in local reader
