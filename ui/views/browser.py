@@ -447,6 +447,34 @@ class BrowserView(QWidget):
                         
         update_cards(self.content_container)
 
+    def _get_context_pubs(self):
+        """Extract all Publication objects from the current view's buffer for navigation context."""
+        pubs = []
+        source = "None"
+        # ReFit and Paging modes use items_buffer
+        if self.items_buffer:
+            source = "items_buffer"
+            for item in self.items_buffer:
+                if isinstance(item, Publication):
+                    pubs.append(item)
+        # Continuous mode uses sparse_buffer
+        elif self.sparse_buffer:
+            source = "sparse_buffer"
+            # Sort by global index to maintain correct order
+            for idx in sorted(self.sparse_buffer.keys()):
+                item = self.sparse_buffer[idx]
+                if isinstance(item, Publication):
+                    pubs.append(item)
+        # Dashboard mode uses groups
+        elif hasattr(self, 'current_feed') and self.current_feed and self.current_feed.groups:
+            source = "groups"
+            for group in self.current_feed.groups:
+                if group.publications:
+                    pubs.extend(group.publications)
+        
+        logger.debug(f"BrowserView _get_context_pubs: source={source}, count={len(pubs)}")
+        return pubs
+
     def _on_card_selection_toggled(self, pub, key, is_selected):
         if is_selected:
             self._selected_items.add(key)
@@ -654,6 +682,7 @@ class BrowserView(QWidget):
             if token != self._load_token: return
             
             logger.debug(f"Feed fetched: '{feed.metadata.title}'. Links: {len(feed.links or [])}, Groups: {len(feed.groups or [])}, Pubs: {len(feed.publications or [])}, Nav: {len(feed.navigation or [])}")
+            self.current_feed = feed
             
             self.status_label.setText(feed.metadata.title)
             
@@ -1365,7 +1394,7 @@ class BrowserView(QWidget):
     def _create_continuous_widget(self, item):
         if isinstance(item, Publication):
             card = PublicationCard(item, self.api_client.profile.get_base_url(), self.image_manager)
-            card.clicked.connect(self.on_open_detail_callback)
+            card.clicked.connect(lambda p, url: self.on_open_detail_callback(p, url, self._get_context_pubs()))
             card.selection_toggled.connect(self._on_card_selection_toggled)
             card.download_requested.connect(self.on_start_download)
             card.set_selection_mode(self._selection_mode)
@@ -1505,7 +1534,7 @@ class BrowserView(QWidget):
                     
                     for pub in group.publications:
                         card = PublicationCard(pub, self.api_client.profile.get_base_url(), self.image_manager)
-                        card.clicked.connect(self.on_open_detail_callback)
+                        card.clicked.connect(lambda p, url: self.on_open_detail_callback(p, url, self._get_context_pubs()))
                         card.selection_toggled.connect(self._on_card_selection_toggled)
                         card.download_requested.connect(self.on_start_download)
                         card.set_selection_mode(self._selection_mode)
@@ -1544,7 +1573,7 @@ class BrowserView(QWidget):
         cols = 5
         for i, pub in enumerate(publications):
             card = PublicationCard(pub, self.api_client.profile.get_base_url(), self.image_manager)
-            card.clicked.connect(self.on_open_detail_callback)
+            card.clicked.connect(lambda p, url: self.on_open_detail_callback(p, url, self._get_context_pubs()))
             card.selection_toggled.connect(self._on_card_selection_toggled)
             card.download_requested.connect(self.on_start_download)
             card.set_selection_mode(self._selection_mode)

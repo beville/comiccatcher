@@ -17,7 +17,7 @@ Features:
 from __future__ import annotations
 import asyncio
 import enum
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 
 from PyQt6.QtCore import Qt, QEvent, QPoint, QTimer, QSize
 from PyQt6.QtGui import QKeyEvent, QPainter, QPixmap, QAction, QActionGroup, QColor
@@ -229,6 +229,117 @@ class MiniDetailPopover(QFrame):
 
 
 # ---------------------------------------------------------------------------
+# Adjacent Book Popover
+# ---------------------------------------------------------------------------
+
+class AdjacentBookPopover(QFrame):
+    """
+    A popover that appears when reaching the start/end of a book,
+    suggesting the next or previous book in the current context.
+    """
+    def __init__(self, parent=None, on_clicked: Callable[[], None] = None):
+        super().__init__(parent)
+        self.on_clicked = on_clicked
+        self.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        self.setFixedWidth(300)
+        self.setFixedHeight(400)
+        
+        # Main container
+        self.container = QFrame(self)
+        self.container.setObjectName("adjacent_container")
+        self.container.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.container.setStyleSheet("""
+            QFrame#adjacent_container {
+                background-color: #ffffff;
+                border: 2px solid #007fd4;
+                border-radius: 15px;
+            }
+            QLabel { color: #222222; background: transparent; }
+            QLabel#header_label { font-weight: bold; font-size: 14px; color: #007fd4; }
+            QLabel#title_label { font-weight: bold; font-size: 15px; color: #111111; }
+        """)
+        
+        # Shadow
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(0, 0, 0, 100))
+        self.container.setGraphicsEffect(shadow)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(self.container)
+        
+        self.inner_layout = QVBoxLayout(self.container)
+        self.inner_layout.setContentsMargins(20, 20, 20, 20)
+        self.inner_layout.setSpacing(15)
+        
+        # Header (e.g. Next Comic)
+        self.hdr_label = QLabel("")
+        self.hdr_label.setObjectName("header_label")
+        self.hdr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.inner_layout.addWidget(self.hdr_label)
+        
+        # Cover
+        self.cover_label = QLabel()
+        self.cover_label.setFixedSize(180, 270)
+        self.cover_label.setScaledContents(True)
+        self.cover_label.setStyleSheet("border: 1px solid #ddd; border-radius: 4px;")
+        self.inner_layout.addWidget(self.cover_label, 0, Qt.AlignmentFlag.AlignCenter)
+        
+        # Title
+        self.title_label = QLabel("")
+        self.title_label.setObjectName("title_label")
+        self.title_label.setWordWrap(True)
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.inner_layout.addWidget(self.title_label)
+        
+    def populate(self, direction: int, title: str, cover: QPixmap):
+        self.direction = direction
+        if direction > 0:
+            self.hdr_label.setText("Next Comic 👉")
+        else:
+            self.hdr_label.setText("👈 Previous Comic")
+            
+        self.title_label.setText(title)
+        if cover and not cover.isNull():
+            self.cover_label.setPixmap(cover)
+        else:
+            self.cover_label.setText("No Cover")
+            
+    def mousePressEvent(self, event):
+        # Only trigger transition if clicking INSIDE the container
+        if self.container.geometry().contains(event.pos()):
+            if self.on_clicked:
+                self.on_clicked()
+        
+        self.hide()
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        
+        # Proper direction key triggers transition
+        if key == Qt.Key.Key_Right and self.direction > 0:
+            if self.on_clicked:
+                self.on_clicked()
+        elif key == Qt.Key.Key_Left and self.direction < 0:
+            if self.on_clicked:
+                self.on_clicked()
+        
+        # ANY key (proper or otherwise) closes the popover
+        self.hide()
+        # If it was NOT the proper key, we don't want to pass it through 
+        # to the reader (preventing accidental page turns or exits)
+        event.accept()
+
+    def show_at(self, pos: QPoint):
+        self.move(pos)
+        self.show()
+
+
+# ---------------------------------------------------------------------------
 # Thumbnail slider
 # ---------------------------------------------------------------------------
 
@@ -362,10 +473,20 @@ class BaseReaderView(QWidget):
     PREFETCH_AHEAD  = 3
     PREFETCH_BEHIND = 1
 
-    def __init__(self, on_exit, image_manager: ImageManager = None, on_title_clicked: Callable[[], None] = None):
+    def __init__(
+        self, 
+        on_exit, 
+        image_manager: ImageManager = None, 
+        on_title_clicked: Callable[[], None] = None,
+        on_get_adjacent: Callable[[int], Any] = None,
+        on_transition: Callable[[Any], None] = None
+    ):
         super().__init__()
         self.on_exit = on_exit
         self.on_title_clicked = on_title_clicked
+        self.on_get_adjacent = on_get_adjacent
+        self.on_transition = on_transition
+
         self._index   = 0
         self._total   = 0
         self._fit_mode    = FitMode.FIT_PAGE
@@ -382,6 +503,10 @@ class BaseReaderView(QWidget):
 
         # Meta Popover
         self.meta_popover = MiniDetailPopover(self)
+        
+        # Adjacent Popover
+        self.adjacent_popover = AdjacentBookPopover(self, on_clicked=self._on_adjacent_clicked)
+        self._current_adjacent_ref = None
 
 
         # --- Graphics view (fills the whole widget) ---
@@ -536,6 +661,44 @@ class BaseReaderView(QWidget):
         self.header.setGeometry(0, 0, w, 38)
         self.footer.setGeometry(0, self.height() - ftr_h, w, ftr_h)
 
+    def _on_adjacent_clicked(self):
+        if self.on_transition and self._current_adjacent_ref:
+            self.on_transition(self._current_adjacent_ref)
+
+    async def _handle_boundary(self, direction: int):
+        """Called when trying to go past first/last page."""
+        logger.debug(f"Reader _handle_boundary: direction={direction}")
+        if not self.on_get_adjacent: 
+            logger.debug("Reader: No on_get_adjacent callback registered")
+            return
+        
+        try:
+            # Subclass or AppLayout provides this
+            info = await self.on_get_adjacent(direction)
+            if not info: 
+                logger.debug(f"Reader: No adjacent book found in direction {direction}")
+                return
+            
+            title, pixmap, book_ref = info
+            self._current_adjacent_ref = book_ref
+            logger.debug(f"Reader: Found adjacent book: {title}")
+            
+            self.adjacent_popover.populate(direction, title, pixmap)
+            
+            # Position
+            if direction > 0:
+                # Next: Right side
+                x = self.width() - self.adjacent_popover.width() - 40
+            else:
+                # Prev: Left side
+                x = 40
+                
+            y = (self.height() - self.adjacent_popover.height()) // 2
+            self.adjacent_popover.show_at(self.mapToGlobal(QPoint(x, y)))
+            
+        except Exception as e:
+            logger.error(f"Error getting adjacent book: {e}")
+
     # ------------------------------------------------------------------ #
     # Activity / overlay visibility                                        #
     # ------------------------------------------------------------------ #
@@ -624,10 +787,22 @@ class BaseReaderView(QWidget):
         self._bump_cursor() # Restore cursor on any click
         w = self.view.viewport().width()
         x = event.position().x()
-        if x < w / 3:
-            self._next() if self._rtl else self._prev()
-        elif x > w * 2 / 3:
-            self._prev() if self._rtl else self._next()
+        
+        is_left = x < w / 3
+        is_right = x > w * 2 / 3
+        
+        if is_left:
+            # Page turn or boundary
+            if self._rtl:
+                self._next()
+            else:
+                self._prev()
+        elif is_right:
+            # Page turn or boundary
+            if self._rtl:
+                self._prev()
+            else:
+                self._next()
         else:
             # Centre tap: toggle overlay visibility
             if self._overlays_visible:
@@ -701,18 +876,27 @@ class BaseReaderView(QWidget):
     # ------------------------------------------------------------------ #
 
     def _prev(self):
+        logger.debug(f"Reader _prev called. index={self._index}, total={self._total}")
         if self._index > 0:
             step = 2 if self._effective_layout() == PageLayout.DOUBLE else 1
             self._go_to(self._index - step)
+        else:
+            logger.debug("Reader: at first page, triggering prev boundary check")
+            asyncio.create_task(self._handle_boundary(-1))
 
     def _next(self):
+        logger.debug(f"Reader _next called. index={self._index}, total={self._total}")
         if self._index < self._total - 1:
             step = 2 if self._effective_layout() == PageLayout.DOUBLE else 1
             self._go_to(self._index + step)
+        else:
+            logger.debug("Reader: at last page, triggering next boundary check")
+            asyncio.create_task(self._handle_boundary(1))
 
     def _go_to(self, idx: int):
         idx = max(0, min(idx, self._total - 1))
         self._index = idx
+        self.adjacent_popover.hide()
         asyncio.create_task(self._show_page())
 
     def _on_slider_pressed(self):

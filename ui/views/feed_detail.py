@@ -19,7 +19,7 @@ from ui.flow_layout import FlowLayout
 from ui.image_data import TRANSPARENT_DATA_URL
 from ui.views.base_detail import BaseDetailView
 
-logger = get_logger("ui.detail")
+logger = get_logger("ui.feed_detail")
 
 class ClickableBadge(QFrame):
     def __init__(self, text, on_click):
@@ -37,7 +37,7 @@ class ClickableBadge(QFrame):
         self.on_click()
         super().mousePressEvent(event)
 
-class DetailView(BaseDetailView):
+class FeedDetailView(BaseDetailView):
     def __init__(self, config_manager, on_back, on_read, on_navigate, on_start_download, on_open_detail, image_manager: ImageManager, local_db=None):
         super().__init__(on_back, image_manager)
         self.config_manager = config_manager
@@ -55,10 +55,11 @@ class DetailView(BaseDetailView):
         self._current_base_url = None
         self._active_load_id = None
 
-    def load_publication(self, pub: Publication, base_url: str, api_client, opds_client, image_manager, history=None, force_refresh: bool = False):
+    def load_publication(self, pub: Publication, base_url: str, api_client, opds_client, image_manager, context_pubs=None, history=None, force_refresh: bool = False):
         self.api_client = api_client
         self.opds_client = opds_client
         self.image_manager = image_manager
+        self._context_pubs = context_pubs
         
         device_id = self.config_manager.get_device_id()
         self.progression_sync = ProgressionSync(api_client, device_id)
@@ -191,7 +192,7 @@ class DetailView(BaseDetailView):
 
         # Action Buttons
         manifest_url = next((urljoin(base_url, l.href) for l in pub.links if l.type in ["application/webpub+json", "application/divina+json"]), base_url)
-        btn_read = self._add_read_button(lambda: self.on_read(pub, manifest_url), "Read Now")
+        btn_read = self._add_read_button(lambda: self.on_read(pub, manifest_url, self._context_pubs), "Read Now")
         btn_read.setObjectName("primary_button")
         
         download_url = next((urljoin(base_url, l.href) for l in pub.links if l.rel == "http://opds-spec.org/acquisition" or (l.type and "cbz" in l.type)), None)

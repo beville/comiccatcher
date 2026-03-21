@@ -54,7 +54,7 @@ class FeedListView(QWidget):
                 border-bottom: 1px solid rgba(128, 128, 128, 50);
             }
         """)
-        self.feeds_list.itemDoubleClicked.connect(self._on_item_double_clicked)
+        self.feeds_list.itemClicked.connect(self._on_item_clicked)
         self.layout.addWidget(self.feeds_list)
         
         self.refresh_feeds()
@@ -111,7 +111,7 @@ class FeedListView(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.refresh_feeds()
 
-    def _on_item_double_clicked(self, item):
+    def _on_item_clicked(self, item):
         feed = item.data(Qt.ItemDataRole.UserRole)
         if feed:
             self.on_feed_selected(feed)

@@ -21,7 +21,7 @@ from ui.theme_manager import ThemeManager
 from api.local_db import LocalLibraryDB
 from api.library_scanner import LibraryScanner
 
-logger = get_logger("ui.library")
+logger = get_logger("ui.local_library")
 
 COMIC_EXTS = {".cbz", ".cbr", ".cb7", ".pdf"}
 _COVER_URL_SUFFIX = "_cover_thumb"
@@ -301,7 +301,7 @@ class LocalLibraryView(QWidget):
     def __init__(
         self,
         config_manager: ConfigManager,
-        on_open_comic: Callable[[Path], None],
+        on_open_comic: Callable[[Path, Optional[List[Path]]], None],
         image_manager: ImageManager,
         local_db: Optional[LocalLibraryDB] = None,
     ):
@@ -987,7 +987,14 @@ class LocalLibraryView(QWidget):
         if path.is_dir():
             asyncio.create_task(self._load_dir(path))
         else:
-            self.on_open_comic(path)
+            lw = item.listWidget()
+            context = []
+            if lw:
+                for i in range(lw.count()):
+                    p = lw.item(i).data(Qt.ItemDataRole.UserRole)
+                    if isinstance(p, Path) and not p.is_dir():
+                        context.append(p)
+            self.on_open_comic(path, context)
 
     def _on_db_item_double_clicked(self, item):
         if self._selection_mode:
@@ -995,7 +1002,14 @@ class LocalLibraryView(QWidget):
 
         path = item.data(Qt.ItemDataRole.UserRole)
         if path.exists():
-            self.on_open_comic(path)
+            lw = item.listWidget()
+            context = []
+            if lw:
+                for i in range(lw.count()):
+                    p = lw.item(i).data(Qt.ItemDataRole.UserRole)
+                    if isinstance(p, Path) and not p.is_dir():
+                        context.append(p)
+            self.on_open_comic(path, context)
 
     @property
     def is_at_root(self):

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import enum
 import traceback
 import urllib.parse
 from pathlib import Path
@@ -12,17 +13,17 @@ from PyQt6.QtWidgets import (
     QLayout, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize, QTimer, QRect, QPoint
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QPixmap
 
 from config import ConfigManager, CONFIG_DIR
 from ui.flow_layout import FlowLayout
 from ui.views.feed_list import FeedListView
-from ui.views.library import LocalLibraryView
-from ui.views.library_detail import LocalComicDetailView
+from ui.views.local_library import LocalLibraryView
+from ui.views.local_detail import LocalDetailView
 from ui.views.local_reader import LocalReaderView
 from ui.views.browser import BrowserView
-from ui.views.detail import DetailView
-from ui.views.reader import ReaderView
+from ui.views.feed_detail import FeedDetailView
+from ui.views.feed_reader import FeedReaderView
 from ui.views.settings import SettingsView
 from ui.views.downloads import DownloadsView
 from ui.views.search_root import SearchRootView
@@ -35,6 +36,18 @@ from api.image_manager import ImageManager
 
 from logger import get_logger
 logger = get_logger("ui.app_layout")
+
+class ViewIndex(enum.IntEnum):
+    FEED_LIST = 0
+    LIBRARY = 1
+    SETTINGS = 2
+    FEED_BROWSER = 3
+    LOCAL_DETAIL = 4
+    LOCAL_READER = 5
+    DETAIL = 6
+    READER_ONLINE = 7
+    SEARCH_ROOT = 8
+    SEARCH_BROWSER = 9
 
 class DownloadPopover(QFrame):
     def __init__(self, parent, download_manager: DownloadManager):
@@ -289,11 +302,23 @@ class MainWindow(QMainWindow):
         
         self.local_library_view = LocalLibraryView(self.config_manager, self.on_open_local_comic, self.image_manager, self.local_db)
         self.local_library_view.nav_changed.connect(self.update_header)
-        self.local_detail_view = LocalComicDetailView(self.on_back_to_local_library, self.image_manager, self.on_read_local_comic, self.local_db)
-        self.local_reader_view = LocalReaderView(self.on_exit_reader, self.image_manager, self.local_db)
+        self.local_detail_view = LocalDetailView(self.on_back_to_local_library, self.image_manager, self.on_read_local_comic, self.local_db)
+        self.local_reader_view = LocalReaderView(
+            self.on_exit_reader, 
+            self.image_manager, 
+            on_get_adjacent=self._on_reader_boundary_reached,
+            on_transition=self.on_reader_transition_local,
+            local_db=self.local_db
+        )
         
-        self.detail_view = DetailView(self.config_manager, self.on_back_to_browser, self.on_read_book, self.on_navigate_to_url, self.on_start_download, self.on_open_detail, self.image_manager, self.local_db)
-        self.reader_view = ReaderView(self.config_manager, self.on_exit_reader, self.image_manager)
+        self.feed_detail_view = FeedDetailView(self.config_manager, self.on_back_to_browser, self.on_read_book, self.on_navigate_to_url, self.on_start_download, self.on_open_detail, self.image_manager, self.local_db)
+        self.feed_reader_view = FeedReaderView(
+            self.config_manager, 
+            self.on_exit_reader, 
+            self.image_manager,
+            on_get_adjacent=self._on_reader_boundary_reached,
+            on_transition=self.on_reader_transition_online
+        )
         
         # Global Download Manager
         self.download_manager = DownloadManager(None, self.config_manager.get_library_dir())
@@ -301,27 +326,16 @@ class MainWindow(QMainWindow):
         self._last_completed_count = 0
         self.downloads_popover = None
 
-        # Stack Indices:
-        # 0: Feed List (Root of Feeds)
-        # 1: Library
-        # 2: Settings
-        # 3: Feed Browser
-        # 4: Local Detail
-        # 5: Local Reader
-        # 6: Online Detail
-        # 7: Online Reader
-        # 8: Search Root
-        # 9: Search Browser
-        self.content_stack.addWidget(self.feed_list_view)     # 0
-        self.content_stack.addWidget(self.local_library_view)# 1
-        self.content_stack.addWidget(self.settings_view)     # 2
-        self.content_stack.addWidget(self.feed_browser_view) # 3
-        self.content_stack.addWidget(self.local_detail_view) # 4
-        self.content_stack.addWidget(self.local_reader_view) # 5
-        self.content_stack.addWidget(self.detail_view)       # 6
-        self.content_stack.addWidget(self.reader_view)       # 7
-        self.content_stack.addWidget(self.search_root_view)  # 8
-        self.content_stack.addWidget(self.search_browser_view)# 9
+        self.content_stack.addWidget(self.feed_list_view)
+        self.content_stack.addWidget(self.local_library_view)
+        self.content_stack.addWidget(self.settings_view)
+        self.content_stack.addWidget(self.feed_browser_view)
+        self.content_stack.addWidget(self.local_detail_view)
+        self.content_stack.addWidget(self.local_reader_view)
+        self.content_stack.addWidget(self.feed_detail_view)
+        self.content_stack.addWidget(self.feed_reader_view)
+        self.content_stack.addWidget(self.search_root_view)
+        self.content_stack.addWidget(self.search_browser_view)
 
         self.feed_list_view.icon_loaded.connect(self._on_feed_icon_loaded)
         self.settings_view.feed_management.icon_loaded.connect(self._on_feed_icon_loaded)
@@ -403,13 +417,26 @@ class MainWindow(QMainWindow):
             setattr(self.api_client.profile, "_cached_icon", pixmap)
             self.update_header()
 
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            # Only trigger back button for non-reader views
+            # (Readers handle their own Escape logic)
+            idx = self.content_stack.currentIndex()
+            if idx not in (ViewIndex.LOCAL_READER, ViewIndex.READER_ONLINE):
+                self._on_header_back_clicked()
+                return
+        super().keyPressEvent(event)
+
     def _on_header_back_clicked(self):
         current_view_idx = self.content_stack.currentIndex()
-        if current_view_idx == 4: # Local Detail
+        if current_view_idx == ViewIndex.LOCAL_DETAIL:
             self.on_back_to_local_library()
             return
-        if current_view_idx == 1: # Library (Folder Up)
+        if current_view_idx == ViewIndex.LIBRARY:
             self.local_library_view.go_up()
+            return
+        if current_view_idx in (ViewIndex.LOCAL_READER, ViewIndex.READER_ONLINE):
+            self.on_exit_reader()
             return
 
         hist, idx = self.get_current_history()
@@ -449,7 +476,7 @@ class MainWindow(QMainWindow):
             self.config_manager.set_last_view_type("feed")
             hist, idx = self.get_current_history()
             if idx < 0:
-                 self.content_stack.setCurrentIndex(0) # Feed List
+                 self.content_stack.setCurrentIndex(ViewIndex.FEED_LIST)
             else:
                  self._on_tab_clicked(self.active_tab)
             self.update_header()
@@ -480,7 +507,7 @@ class MainWindow(QMainWindow):
         hist, idx = self.get_current_history()
         
         if tab_name == "search" and (not hist or hist[idx]["type"] == "search_root"):
-            self.content_stack.setCurrentIndex(8) # Search Root
+            self.content_stack.setCurrentIndex(ViewIndex.SEARCH_ROOT)
             if self.api_client:
                 f = self.api_client.profile
                 self.search_root_view.update_data(f.search_history, f.pinned_searches)
@@ -489,16 +516,16 @@ class MainWindow(QMainWindow):
             entry = hist[idx]
             if entry["type"] == "browser":
                 if tab_name == "feed":
-                    self.content_stack.setCurrentIndex(3)
+                    self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
                     self.feed_browser_view.setFocus()
                 else:
-                    self.content_stack.setCurrentIndex(9)
+                    self.content_stack.setCurrentIndex(ViewIndex.SEARCH_BROWSER)
                     self.search_browser_view.setFocus()
             elif entry["type"] == "detail":
-                self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager)
-                self.content_stack.setCurrentIndex(6)
+                self.feed_detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager)
+                self.content_stack.setCurrentIndex(ViewIndex.DETAIL)
         else:
-            self.content_stack.setCurrentIndex(0)
+            self.content_stack.setCurrentIndex(ViewIndex.FEED_LIST)
                 
         self.update_header()
 
@@ -650,7 +677,7 @@ class MainWindow(QMainWindow):
         self.current_feed_id = None
         # Keep download_manager alive if downloads are running
         # feed_histories / search_histories are NOT cleared to maintain runtime session
-        self.content_stack.setCurrentIndex(0)
+        self.content_stack.setCurrentIndex(ViewIndex.FEED_LIST)
         self.update_header()
 
     def on_feed_selected(self, feed):
@@ -667,7 +694,7 @@ class MainWindow(QMainWindow):
             
         self.feed_browser_view.set_feed_context(feed, self.opds_client, self.image_manager)
         self.search_browser_view.set_feed_context(feed, self.opds_client, self.image_manager)
-        self.reader_view.api_client = self.api_client
+        self.feed_reader_view.api_client = self.api_client
         
         base_url = feed.url
         start_url = base_url if "opds" in base_url.lower() else urljoin(base_url, "/codex/opds/v2.0/")
@@ -681,7 +708,7 @@ class MainWindow(QMainWindow):
             
             # Initial load for a new feed session
             asyncio.create_task(self.feed_browser_view.load_feed(start_url, "Home"))
-            self.content_stack.setCurrentIndex(3)
+            self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
         else:
             # Resume existing history
             hist = self.feed_histories[feed.id]
@@ -690,9 +717,9 @@ class MainWindow(QMainWindow):
             
             entry = hist[idx]
             if entry["type"] == "detail":
-                self.content_stack.setCurrentIndex(6)
+                self.content_stack.setCurrentIndex(ViewIndex.DETAIL)
             else:
-                self.content_stack.setCurrentIndex(3)
+                self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
         
         self.active_tab = "feed"
         self.search_root_view.update_data(feed.search_history, feed.pinned_searches)
@@ -803,14 +830,14 @@ class MainWindow(QMainWindow):
             idx = len(hist) - 1
             
         self.set_current_history(hist, idx)
-        self.content_stack.setCurrentIndex(9 if self.active_tab == "search" else 3)
+        self.content_stack.setCurrentIndex(ViewIndex.SEARCH_BROWSER if self.active_tab == "search" else ViewIndex.FEED_BROWSER)
         self.update_header()
         
         browser = self.search_browser_view if self.active_tab == "search" else self.feed_browser_view
         asyncio.create_task(browser.load_feed(url, title))
         browser.setFocus()
 
-    def on_open_detail(self, pub, self_url):
+    def on_open_detail(self, pub, self_url, context_pubs=None):
         hist, idx = self.get_current_history()
         if idx < len(hist) - 1:
             hist = hist[:idx + 1]
@@ -818,13 +845,14 @@ class MainWindow(QMainWindow):
             "type": "detail", 
             "title": pub.metadata.title, 
             "url": self_url, 
-            "pub": pub
+            "pub": pub,
+            "context_pubs": context_pubs
         })
         idx = len(hist) - 1
         self.set_current_history(hist, idx)
-        self.content_stack.setCurrentIndex(6)
+        self.content_stack.setCurrentIndex(ViewIndex.DETAIL)
         self.update_header()
-        self.detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager)
+        self.feed_detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager, context_pubs=context_pubs)
 
     def on_jump_to_history(self, index):
         hist, _ = self.get_current_history()
@@ -832,11 +860,11 @@ class MainWindow(QMainWindow):
         self.set_current_history(hist, index)
         entry = hist[index]
         if entry["type"] == "browser":
-            self.content_stack.setCurrentIndex(9 if self.active_tab == "search" else 3)
+            self.content_stack.setCurrentIndex(ViewIndex.SEARCH_BROWSER if self.active_tab == "search" else ViewIndex.FEED_BROWSER)
         elif entry["type"] == "search_root":
-            self.content_stack.setCurrentIndex(8)
+            self.content_stack.setCurrentIndex(ViewIndex.SEARCH_ROOT)
         else:
-            self.content_stack.setCurrentIndex(6)
+            self.content_stack.setCurrentIndex(ViewIndex.DETAIL)
             
         self.update_header()
         
@@ -850,7 +878,15 @@ class MainWindow(QMainWindow):
                 self.search_root_view.update_data(f.search_history, f.pinned_searches)
             self.search_root_view.search_input.setFocus()
         else:
-            self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager)
+            # Detail view
+            self.feed_detail_view.load_publication(
+                entry["pub"], 
+                entry["url"], 
+                self.api_client, 
+                self.opds_client, 
+                self.image_manager, 
+                context_pubs=entry.get("context_pubs")
+            )
 
     def on_manual_refresh(self):
         hist, idx = self.get_current_history()
@@ -864,7 +900,7 @@ class MainWindow(QMainWindow):
                 f = self.api_client.profile
                 self.search_root_view.update_data(f.search_history, f.pinned_searches)
         else:
-            self.detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager, force_refresh=True)
+            self.feed_detail_view.load_publication(entry["pub"], entry["url"], self.api_client, self.opds_client, self.image_manager, force_refresh=True)
 
     def _copy_url_to_clipboard(self):
         url = self.debug_url_text.text()
@@ -887,9 +923,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(btn_close)
         dialog.exec()
 
-    def on_read_book(self, pub, manifest_url):
-        self.reader_view.load_manifest(pub, manifest_url, self.image_manager)
-        self.content_stack.setCurrentIndex(7)
+    def on_read_book(self, pub, manifest_url, context_pubs=None):
+        self.feed_reader_view.load_manifest(pub, manifest_url, self.image_manager, context_pubs=context_pubs)
+        self.content_stack.setCurrentIndex(ViewIndex.READER_ONLINE)
         self.sidebar.hide()
         self.top_header.hide()
 
@@ -900,13 +936,13 @@ class MainWindow(QMainWindow):
             if not self.downloads_popover or not self.downloads_popover.isVisible():
                 self._toggle_downloads_popover()
 
-    def on_open_local_comic(self, path):
-        self.local_detail_view.load_path(path)
-        self.content_stack.setCurrentIndex(4)
+    def on_open_local_comic(self, path, context_paths=None):
+        self.local_detail_view.load_path(path, context_paths=context_paths)
+        self.content_stack.setCurrentIndex(ViewIndex.LOCAL_DETAIL)
         self.update_header()
 
     def on_back_to_local_library(self):
-        self.content_stack.setCurrentIndex(1)
+        self.content_stack.setCurrentIndex(ViewIndex.LIBRARY)
         self.update_header()
 
     def on_back_to_browser(self):
@@ -916,21 +952,124 @@ class MainWindow(QMainWindow):
                 self.on_jump_to_history(i)
                 return
         self.nav_list.setCurrentRow(0)
-        self.content_stack.setCurrentIndex(0)
+        self.content_stack.setCurrentIndex(ViewIndex.FEED_LIST)
 
-    def on_read_local_comic(self, path):
-        self.local_reader_view.load_cbz(path)
-        self.content_stack.setCurrentIndex(5)
+    def on_read_local_comic(self, path, context_paths=None):
+        self.local_reader_view.load_cbz(path, context_paths=context_paths)
+        self.content_stack.setCurrentIndex(ViewIndex.LOCAL_READER)
         self.sidebar.hide()
         self.top_header.hide()
+
+    async def _on_reader_boundary_reached(self, direction: int):
+        """Called by BaseReaderView to get info about the next/prev book in context."""
+        hist, idx = self.get_current_history()
+        if idx < 0: return None
+        entry = hist[idx]
+        
+        # 1. Online Context
+        if entry["type"] == "detail" and "pub" in entry:
+            pubs = entry.get("context_pubs", [])
+            if not pubs: return None
+            
+            # Find current pub index
+            cur_pub = entry["pub"]
+            p_idx = -1
+            for i, p in enumerate(pubs):
+                # Robust comparison: ID then Title
+                if p.identifier and cur_pub.identifier and p.identifier == cur_pub.identifier:
+                    p_idx = i
+                    break
+                if p.metadata.title == cur_pub.metadata.title:
+                    p_idx = i
+                    break
+            
+            if p_idx == -1: return None
+            
+            target_idx = p_idx + direction
+            if 0 <= target_idx < len(pubs):
+                target_pub = pubs[target_idx]
+                
+                # Get cover from cache
+                pixmap = QPixmap()
+                if target_pub.images:
+                    img_url = target_pub.images[0].href
+                    # Use last loaded url as base
+                    full_img_url = urllib.parse.urljoin(entry["url"], img_url)
+                    cache_path = self.image_manager._get_cache_path(full_img_url)
+                    if cache_path.exists():
+                        pixmap.load(str(cache_path))
+                
+                # Get self_url
+                self_url = next((urllib.parse.urljoin(entry["url"], l.href) for l in target_pub.links if l.rel == "self"), None)
+                if not self_url and target_pub.links:
+                    self_url = urllib.parse.urljoin(entry["url"], target_pub.links[0].href)
+                
+                return target_pub.metadata.title, pixmap, (target_pub, self_url)
+
+        # 2. Local Context
+        # Check both the content stack and the entry to see if we are in local reader
+        if self.content_stack.currentIndex() == ViewIndex.LOCAL_READER:
+            paths = self.local_reader_view._context_paths
+            if not paths: return None
+            
+            cur_path = self.local_reader_view._path
+            if not cur_path: return None
+            
+            p_abs = cur_path.absolute()
+            p_idx = -1
+            for i, p in enumerate(paths):
+                if p.absolute() == p_abs:
+                    p_idx = i
+                    break
+            
+            if p_idx == -1: return None
+            
+            target_idx = p_idx + direction
+            if 0 <= target_idx < len(paths):
+                target_path = paths[target_idx]
+                
+                # Get cover from cache
+                pixmap = QPixmap()
+                cover_url = f"local-cbz://{target_path.absolute()}/_cover_thumb"
+                cache_path = self.image_manager._get_cache_path(cover_url)
+                if cache_path.exists():
+                    pixmap.load(str(cache_path))
+                
+                return target_path.stem, pixmap, target_path
+
+        return None
+
+    def on_reader_transition_online(self, book_ref):
+        pub, self_url = book_ref
+        hist, idx = self.get_current_history()
+        
+        # Update current history step (the detail step)
+        if idx >= 0:
+            entry = hist[idx]
+            entry["pub"] = pub
+            entry["url"] = self_url
+            entry["title"] = pub.metadata.title
+            
+        # Update detail view in background
+        self.feed_detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager, context_pubs=entry.get("context_pubs"))
+        
+        # Reload reader
+        self.on_read_book(pub, self_url, context_pubs=entry.get("context_pubs"))
+
+    def on_reader_transition_local(self, path):
+        # Local reader transition: update local detail and local reader
+        # Capture context first before clearing/reloading
+        ctx = getattr(self.local_reader_view, "_context_paths", [])
+        self.local_detail_view.load_path(path, context_paths=ctx)
+        self.on_read_local_comic(path, context_paths=ctx)
 
     def on_exit_reader(self):
         self.sidebar.show()
         self.top_header.show()
-        if self.content_stack.currentIndex() == 5:
-            self.content_stack.setCurrentIndex(4)
+        if self.content_stack.currentIndex() == ViewIndex.LOCAL_READER:
+            self.content_stack.setCurrentIndex(ViewIndex.LOCAL_DETAIL)
         else:
-            self.content_stack.setCurrentIndex(6)
+            self.content_stack.setCurrentIndex(ViewIndex.DETAIL)
             self.on_manual_refresh()
         self.update_header()
 

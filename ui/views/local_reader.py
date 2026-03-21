@@ -1,6 +1,6 @@
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Any
 
 from PyQt6.QtCore import QPoint
 from PyQt6.QtGui import QPixmap
@@ -21,8 +21,14 @@ class LocalReaderView(BaseReaderView):
     to disk via ImageManager's cache layout.
     """
 
-    def __init__(self, on_exit, image_manager: ImageManager, local_db=None):
-        super().__init__(on_exit, image_manager, on_title_clicked=self._on_header_title_clicked)
+    def __init__(self, on_exit, image_manager: ImageManager, on_get_adjacent=None, on_transition=None, local_db=None):
+        super().__init__(
+            on_exit, 
+            image_manager, 
+            on_title_clicked=self._on_header_title_clicked,
+            on_get_adjacent=on_get_adjacent,
+            on_transition=on_transition
+        )
         self.local_db = local_db
 
         self._path: Optional[Path] = None
@@ -100,11 +106,12 @@ class LocalReaderView(BaseReaderView):
     # Loading                                                              #
     # ------------------------------------------------------------------ #
 
-    def load_cbz(self, path: Path):
+    def load_cbz(self, path: Path, context_paths: List[Path] = None):
         self.clear_display()
         self._path  = Path(path)
         self._pages = []
         self._index = 0
+        self._context_paths = context_paths or []
         asyncio.create_task(self._load_pages())
 
     async def _load_pages(self):

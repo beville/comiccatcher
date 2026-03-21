@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional
+from typing import Optional, List, Any
 from urllib.parse import urljoin
 
 from PyQt6.QtCore import QPoint
@@ -11,10 +11,10 @@ from api.progression import ProgressionSync
 from models.opds import Publication
 from ui.base_reader import BaseReaderView
 
-logger = get_logger("ui.reader")
+logger = get_logger("ui.feed_reader")
 
 
-class ReaderView(BaseReaderView):
+class FeedReaderView(BaseReaderView):
     """
     OPDS streaming reader.
 
@@ -22,8 +22,14 @@ class ReaderView(BaseReaderView):
     via the Readium Locator API.
     """
 
-    def __init__(self, config_manager, on_exit, image_manager: ImageManager = None):
-        super().__init__(on_exit, image_manager, on_title_clicked=self._on_header_title_clicked)
+    def __init__(self, config_manager, on_exit, image_manager: ImageManager = None, on_get_adjacent=None, on_transition=None):
+        super().__init__(
+            on_exit, 
+            image_manager, 
+            on_title_clicked=self._on_header_title_clicked,
+            on_get_adjacent=on_get_adjacent,
+            on_transition=on_transition
+        )
         self.config_manager = config_manager
         self.api_client    = None
         self.image_manager = image_manager
@@ -143,7 +149,7 @@ class ReaderView(BaseReaderView):
     # Loading                                                              #
     # ------------------------------------------------------------------ #
 
-    def load_manifest(self, pub: Publication, manifest_url: str, image_manager: ImageManager):
+    def load_manifest(self, pub: Publication, manifest_url: str, image_manager: ImageManager, context_pubs: List[Publication] = None):
         self.clear_display()
         self._load_token += 1
         self._current_pub  = pub
@@ -152,6 +158,7 @@ class ReaderView(BaseReaderView):
         self._index = 0
         self._prefetch_set.clear()
         self.image_manager    = image_manager
+        self._context_pubs = context_pubs or []
         self.progression_sync = ProgressionSync(
             self.api_client, self.config_manager.get_device_id()
         )

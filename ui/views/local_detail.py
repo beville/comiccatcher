@@ -16,21 +16,22 @@ from ui.local_archive import read_first_image
 from ui.local_comicbox import flatten_comicbox, read_comicbox_dict, read_comicbox_cover
 from ui.views.base_detail import BaseDetailView
 
-logger = get_logger("ui.library_detail")
+logger = get_logger("ui.local_detail")
 
 def _read_comicbox_meta(path: Path) -> Dict[str, Any]:
     raw = read_comicbox_dict(path)
     return flatten_comicbox(raw)
 
-class LocalComicDetailView(BaseDetailView):
+class LocalDetailView(BaseDetailView):
     def __init__(self, on_back, image_manager: ImageManager, on_read_local=None, local_db: Optional[LocalLibraryDB] = None):
         super().__init__(on_back, image_manager)
         self.on_read_local = on_read_local
         self.db = local_db
         self._path: Optional[Path] = None
 
-    def load_path(self, path: Path):
+    def load_path(self, path: Path, context_paths=None):
         self._path = Path(path)
+        self._context_paths = context_paths
         
         info_layout = self._setup_main_info_layout()
         self._add_title(self._path.stem)
@@ -158,4 +159,4 @@ class LocalComicDetailView(BaseDetailView):
 
     def _on_read_clicked(self):
         if self.on_read_local and self._path:
-            self.on_read_local(self._path)
+            self.on_read_local(self._path, self._context_paths)
