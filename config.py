@@ -30,6 +30,9 @@ SETTINGS_FILE = CONFIG_DIR / "settings.json"
 CACHE_DIR = CONFIG_DIR / "cache"
 DOWNLOADS_DIR = CONFIG_DIR / "downloads"  # legacy; use library_dir for new downloads
 
+# Network Settings
+NETWORK_TIMEOUT = 30.0
+
 class ConfigManager:
     def __init__(self):
         self.feeds: List[FeedProfile] = []
