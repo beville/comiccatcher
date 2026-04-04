@@ -399,17 +399,7 @@ Independent `feed_history` and `search_history` stacks with support for deep-lin
 
 ## 18. Testing
 
-Uses `pytest` with `pytest-asyncio` for core logic and integration testing.
+See TESTING.md
 
 ---
 
-## 19. Known Issues & Future Enhancements
-
-### ReFit Mode
-- **Non-aligned buffer start:** Edge case where the first loaded server page doesn't align with the ReFit virtual-page boundary.
-
-### UI & UX
-- **Feed browser grid columns:** Grid should adapt to viewport width.
-
-### Performance
-- **Large libraries:** Initial thumbnail grid render may be slow; needs a virtual list widget.

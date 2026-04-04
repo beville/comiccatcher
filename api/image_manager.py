@@ -13,6 +13,7 @@ class ImageManager:
     def __init__(self, api_client: APIClient):
         self.api_client = api_client
         self._memory_cache = {} # URL -> Base64 string
+        self._created_subdirs = set()
 
     def get_image_sync(self, url: str):
         """Synchronously retrieves an image from cache (memory or disk)."""
@@ -38,11 +39,11 @@ class ImageManager:
                 
         return None
 
-    async def get_image(self, url: str, api_client: Optional[APIClient] = None):
+    async def get_image(self, url: str, api_client: Optional[APIClient] = None, max_dim: Optional[int] = None):
         """Fetches an image, caches it on disk, and returns it as a QPixmap."""
         from PyQt6.QtGui import QPixmap
         
-        b64 = await self.get_image_b64(url, api_client)
+        b64 = await self.get_image_b64(url, api_client, max_dim=max_dim)
         if not b64:
             return None
             
@@ -55,7 +56,7 @@ class ImageManager:
             logger.error(f"Error converting B64 to Pixmap for {url}: {e}")
             return None
 
-    async def get_image_b64(self, url: str, api_client: Optional[APIClient] = None) -> Optional[str]:
+    async def get_image_b64(self, url: str, api_client: Optional[APIClient] = None, max_dim: Optional[int] = None) -> Optional[str]:
         """Fetches an image, caches it on disk, and returns it as a Base64 string."""
         if not url:
             return None
@@ -87,6 +88,21 @@ class ImageManager:
             resp = await client.get(url)
             if resp.status_code == 200:
                 data = resp.content
+                
+                # Scale if requested and necessary
+                if max_dim:
+                    from PIL import Image
+                    import io
+                    try:
+                        # Pillow's open() is lazy; it only reads the header to get dimensions.
+                        # This is fast enough for the main thread as it doesn't decode pixels yet.
+                        with Image.open(io.BytesIO(data)) as img:
+                            if img.width > max_dim or img.height > max_dim:
+                                import asyncio
+                                data = await asyncio.to_thread(self._scale_image, data, max_dim)
+                    except Exception as e:
+                        logger.error(f"Error checking image dimensions for {url}: {e}")
+
                 # Save to disk
                 with open(cache_path, "wb") as f:
                     f.write(data)
@@ -102,12 +118,33 @@ class ImageManager:
 
         return None
 
+    def _scale_image(self, data: bytes, max_dim: int) -> bytes:
+        """Helper to scale down image bytes using Pillow. Runs in a thread."""
+        from PIL import Image
+        import io
+        try:
+            img = Image.open(io.BytesIO(data))
+            if img.width > max_dim or img.height > max_dim:
+                # Use Image.thumbnail which preserves aspect ratio and is efficient
+                img.thumbnail((max_dim, max_dim))
+                out = io.BytesIO()
+                # Try to preserve format (JPEG, PNG, etc)
+                fmt = img.format or "JPEG"
+                img.save(out, format=fmt)
+                return out.getvalue()
+        except Exception as e:
+            logger.error(f"Error scaling image: {e}")
+        return data
+
     def _get_cache_path(self, url: str) -> Path:
         """Generates a unique file path for a URL."""
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
         # Ensure subdirectory based on hash to avoid flat folder limits
-        sub_dir = CACHE_DIR / url_hash[:2]
-        sub_dir.mkdir(exist_ok=True)
+        prefix = url_hash[:2]
+        sub_dir = CACHE_DIR / prefix
+        if prefix not in self._created_subdirs:
+            sub_dir.mkdir(exist_ok=True)
+            self._created_subdirs.add(prefix)
         return sub_dir / url_hash
 
     def clear_memory_cache(self):
@@ -124,6 +161,7 @@ class ImageManager:
                         shutil.rmtree(item)
                     else:
                         item.unlink()
+                self._created_subdirs.clear()
                 logger.info("Disk cache cleared successfully.")
             except Exception as e:
                 logger.error(f"Error clearing disk cache: {e}")

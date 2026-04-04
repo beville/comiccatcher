@@ -262,6 +262,7 @@ class UIConstants:
 
 class ThemeManager:
     _current_theme: str = "dark"
+    _icon_cache: dict = {}
 
     @classmethod
     def get_current_theme_colors(cls) -> dict:
@@ -273,6 +274,10 @@ class ThemeManager:
         Returns a state-aware QIcon that handles different colors for 
         Normal, Disabled, and Selected/Checked states.
         """
+        cache_key = (name, color_key, cls._current_theme)
+        if cache_key in cls._icon_cache:
+            return cls._icon_cache[cache_key]
+
         # logger.debug(f"ThemeManager: get_icon('{name}', '{color_key}')")
         path = ICON_DIR / f"{name}.svg"
         if not path.exists():
@@ -340,6 +345,7 @@ class ThemeManager:
             # In Qt, 'Selected' often maps to the 'Checked' state in stylesheets
             icon.addPixmap(pm_selected, QIcon.Mode.Normal, QIcon.State.On)
             
+        cls._icon_cache[cache_key] = icon
         return icon
 
     @classmethod
@@ -348,6 +354,7 @@ class ThemeManager:
         s = UIConstants.scale
         
         cls._current_theme = theme_name
+        cls._icon_cache.clear()
         theme = THEMES.get(theme_name, THEMES["dark"])
         
         stylesheet = f"""
@@ -413,6 +420,12 @@ class ThemeManager:
             QPushButton:hover {{
                 border-color: {theme['accent']};
                 background-color: {theme['bg_item_selected']};
+            }}
+
+            QPushButton:disabled {{
+                background-color: transparent;
+                color: {theme['text_dim']};
+                border-color: {theme['border']};
             }}
 
             QPushButton[flat="true"] {{
@@ -708,6 +721,30 @@ class ThemeManager:
             QWidget QPushButton#primary_button:hover {{
                 background-color: {theme['accent']} !important;
                 opacity: 0.8 !important;
+            }}
+
+            QWidget QPushButton#primary_button:disabled {{
+                background-color: transparent !important;
+                color: {theme['text_dim']} !important;
+                border: 1px solid {theme['border']} !important;
+            }}
+
+            QWidget QPushButton#secondary_button {{
+                background-color: transparent !important;
+                color: {theme['accent']} !important;
+                border: 1px solid {theme['accent']} !important;
+                border-radius: {s(4)}px !important;
+                padding: {s(8)}px {s(20)}px !important;
+            }}
+
+            QWidget QPushButton#secondary_button:hover {{
+                background-color: {theme['bg_item_hover']} !important;
+            }}
+
+            QWidget QPushButton#secondary_button:disabled {{
+                color: {theme['text_dim']} !important;
+                border-color: {theme['border']} !important;
+                background-color: transparent !important;
             }}
 
             QWidget QPushButton#danger_button {{

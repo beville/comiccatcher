@@ -142,8 +142,13 @@ class BaseCardDelegate(QStyledItemDelegate):
         elif image_manager and getattr(image_manager, 'api_client', None):
             profile = getattr(image_manager.api_client, 'profile', None)
             cached_icon = getattr(profile, '_cached_icon', None) if profile else None
+            
             if cached_icon and not cached_icon.isNull():
                 painter.drawPixmap(int(badge_x), int(badge_y), int(badge_size), int(badge_size), cached_icon)
+            else:
+                # Fallback to generic feeds icon if no server logo
+                default_icon = ThemeManager.get_icon("feeds", "text_dim")
+                default_icon.paint(painter, int(badge_x), int(badge_y), int(badge_size), int(badge_size))
 
         # 4. Internal Label (only used when global labels are off)
         if label and not self.show_labels:

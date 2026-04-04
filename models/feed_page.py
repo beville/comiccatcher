@@ -53,6 +53,45 @@ class FeedPage(BaseModel):
     total_pages: Optional[int] = None
     sections: List[FeedSection] = []
     facets: List[Any] = [] # List of Group objects or dicts for filters
-    
+
+    pagination_template: Optional[str] = None # {page}
+    is_offset_based: bool = False
+    is_dashboard: bool = False
+
     # Breadcrumbs for navigation
+
     breadcrumbs: List[Dict[str, str]] = [] # [{"title": "Home", "url": "..."}]
+
+    @property
+    def main_section(self) -> Optional[FeedSection]:
+        """Identifies the primary content section based on size and layout."""
+        if not self.sections:
+            return None
+
+        from ui.theme_manager import UIConstants
+        
+        # 1. Look for a section that is ALREADY large in this response
+        # or is explicitly paginated (has a next link)
+        for s in self.sections:
+            # We focus on what we actually HAVE right now. 
+            # If we only have 10 items, it's a ribbon regardless of total_items.
+            if len(s.items) > UIConstants.LARGE_SECTION_THRESHOLD or s.next_url:
+                return s
+
+        # 2. Look for a section explicitly marked as GRID
+        grids = [s for s in self.sections if s.layout == SectionLayout.GRID]
+        if grids:
+            return max(grids, key=lambda s: len(s.items))
+
+        # 3. Fallback: If it's a dashboard, don't force a grid if the sections are just preview links.
+        if self.is_dashboard:
+            # Check the last section. If it has a way to see more (self_url), 
+            # and it's currently small, keep it as a ribbon.
+            last = self.sections[-1]
+            if last.self_url and len(last.items) <= UIConstants.LARGE_SECTION_THRESHOLD:
+                return None
+            return last
+            
+        # For non-dashboards (single results lists), always use the last/only section
+        return self.sections[-1]
+

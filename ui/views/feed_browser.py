@@ -2,12 +2,14 @@ import asyncio
 import urllib.parse
 import re
 import time
+from pathlib import Path
 from typing import List, Dict, Optional, Set
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
     QPushButton, QMenu, QStackedWidget
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QPixmap
 
 from models.feed_page import FeedPage, FeedItem
 from api.opds_v2 import OPDS2Client
@@ -22,6 +24,43 @@ from ui.views.scrolled_feed_view import ScrolledFeedView
 from ui.views.base_browser import BaseBrowserView
 
 logger = get_logger("ui.feed_browser")
+
+class LoadingOverlay(QWidget):
+    """A simple full-view overlay with a large transparent logo."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.logo = QLabel()
+        s = UIConstants.scale
+        self._logo_size = s(256)
+        
+        # Apply transparency via graphics effect
+        from PyQt6.QtWidgets import QGraphicsOpacityEffect
+        self.opacity_effect = QGraphicsOpacityEffect()
+        self.opacity_effect.setOpacity(0.15) # Mostly transparent
+        self.logo.setGraphicsEffect(self.opacity_effect)
+        
+        self.layout.addWidget(self.logo)
+        self._set_default_logo()
+
+    def _set_default_logo(self):
+        # Use the generic 'feeds' icon as the default for the background
+        icon = ThemeManager.get_icon("feeds")
+        pixmap = icon.pixmap(self._logo_size, self._logo_size)
+        if not pixmap.isNull():
+            self.set_icon(pixmap)
+
+    def set_icon(self, pixmap: QPixmap):
+        if pixmap and not pixmap.isNull():
+            self.logo.setPixmap(pixmap.scaled(
+                self._logo_size, self._logo_size, 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            ))
+        else:
+            self._set_default_logo()
 
 class FeedBrowser(BaseBrowserView):
     """
@@ -57,17 +96,21 @@ class FeedBrowser(BaseBrowserView):
         # 2. Setup Sub-Views
         self.paged_view = PagedFeedView(self.image_manager, self._collapsed_sections, self)
         self.scrolled_view = ScrolledFeedView(self.opds_client, self.image_manager, self._collapsed_sections, self)
+        self.loading_view = LoadingOverlay(self)
         
         self.stack = QStackedWidget()
         self.stack.addWidget(self.paged_view)
         self.stack.addWidget(self.scrolled_view)
+        self.stack.addWidget(self.loading_view)
         self.add_content_widget(self.stack)
         
         # 3. Connect Signals
         self.paged_view.item_clicked.connect(self.item_clicked.emit)
         self.paged_view.navigate_requested.connect(self.navigate_requested.emit)
+        self.paged_view.cover_request_needed.connect(self._on_cover_request)
         
         self.scrolled_view.item_clicked.connect(self.item_clicked.emit)
+        self.scrolled_view.navigate_requested.connect(self.navigate_requested.emit)
         self.scrolled_view.status_updated.connect(self.status_label.setText)
         self.scrolled_view.busy_updated.connect(lambda b: self._update_busy_state("scrolled_fetch", b))
         self.scrolled_view.cover_request_needed.connect(self._on_cover_request)
@@ -167,6 +210,20 @@ class FeedBrowser(BaseBrowserView):
             target_offset = self.scrolled_view._scroll_offset
 
         self._last_loaded_url = url
+        
+        # Try to use server icon for loading screen
+        server_pixmap = None
+        if self.current_profile and self.current_profile.icon_url:
+            icon_url = self.current_profile.icon_url
+            icon_path = self.image_manager._get_cache_path(icon_url)
+            if icon_path.exists():
+                server_pixmap = QPixmap(str(icon_path))
+            else:
+                # Trigger a background fetch for next time
+                asyncio.create_task(self.image_manager.get_image_b64(icon_url))
+        
+        self.loading_view.set_icon(server_pixmap)
+        self.stack.setCurrentWidget(self.loading_view)
         
         self._update_busy_state("initial_load", True)
         try:
@@ -323,7 +380,7 @@ class FeedBrowser(BaseBrowserView):
             
         # Delegate to image manager
         async def fetch():
-            await self.image_manager.get_image_b64(url)
+            await self.image_manager.get_image_b64(url, max_dim=400)
             if self.isVisible():
                 self.paged_view.content.update()
                 self.scrolled_view._vp.update()
@@ -351,11 +408,10 @@ class FeedBrowser(BaseBrowserView):
 
     def reapply_theme(self):
         super().reapply_theme()
-        # Sub-views will pick up theme on their next repaint or we could explicitly call it
         if hasattr(self, 'paged_view'):
-            self.paged_view.update()
+            self.paged_view.reapply_theme()
         if hasattr(self, 'scrolled_view'):
-            self.scrolled_view.update()
+            self.scrolled_view.reapply_theme()
         self.refresh_icons()
 
     def refresh_icons(self):

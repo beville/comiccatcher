@@ -18,8 +18,12 @@ def get_sec_id(local_file, url):
     page = FeedReconciler.reconcile(feed, url)
     return page.sections[0].section_id if page.sections else "NONE"
 
-url1 = "https://anville.duckdns.org:2700/codex/opds/v2.0/p/0/1?topGroup=p"
-url2 = "https://anville.duckdns.org:2700/codex/opds/v2.0/p/0/2?topGroup=p"
+url1 = os.environ.get("CC_CODEX_P1")
+url2 = os.environ.get("CC_CODEX_P2")
+
+if not url1 or not url2:
+    print("❌ FAILED: CC_CODEX_P1 and CC_CODEX_P2 must be set.")
+    sys.exit(1)
 
 id1 = get_sec_id("codex_opds_v2.0_p_0_1_16e2638808bc7ba2.json", url1)
 id2 = get_sec_id("codex_opds_v2.0_p_0_2_8d630b67b57aeff0.json", url2)

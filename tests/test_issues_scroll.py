@@ -24,7 +24,10 @@ async def drive_issues():
     window.on_feed_selected(feed_profile)
     await asyncio.sleep(1)
     
-    url_feed = "https://anville.duckdns.org:2700/codex/opds/v2.0/s/0/1?topGroup=s"
+    url_feed = os.environ.get("CC_CODEX_ISSUES_URL")
+    if not url_feed:
+        print("❌ FAILED: CC_CODEX_ISSUES_URL must be set.")
+        sys.exit(1)
     print("Loading Issues feed...")
     await browser.load_url(url_feed)
     

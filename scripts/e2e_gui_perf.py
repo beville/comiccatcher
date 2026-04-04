@@ -18,11 +18,15 @@ async def run_perf_test():
     config = ConfigManager()
     
     # Target Start Pages for Codex, Komga, Stump
-    targets = [
-        {"name": "Codex", "url": "https://anville.duckdns.org:2700/codex/opds/v2.0/"},
-        {"name": "Stump", "url": "https://anville.duckdns.org:2702/opds/v2.0/catalog"},
-        {"name": "Komga", "url": "https://anville.duckdns.org:2700/komga/opds/v2/catalog"},
-    ]
+    targets = []
+    for name, env_var in [("Codex", "CC_CODEX_URL"), ("Stump", "CC_STUMP_URL"), ("Komga", "CC_KOMGA_URL")]:
+        url = os.environ.get(env_var)
+        if url:
+            targets.append({"name": name, "url": url})
+            
+    if not targets:
+        print("❌ FAILED: At least one of CC_CODEX_URL, CC_STUMP_URL, or CC_KOMGA_URL must be set.")
+        sys.exit(1)
     
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow(config)

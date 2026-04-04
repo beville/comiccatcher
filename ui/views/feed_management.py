@@ -403,17 +403,22 @@ class FeedManagementView(QWidget):
 
     async def _load_cached_icon(self, feed: FeedProfile, item: QListWidgetItem):
         try:
-            client = APIClient(feed)
-            await self.shared_image_manager.get_image_b64(feed.icon_url, api_client=client)
-            full_path = self.shared_image_manager._get_cache_path(feed.icon_url)
-            if full_path.exists():
-                pixmap = QPixmap(str(full_path))
+            # Optimization: Check disk cache first. 
+            # If it's there, we don't need to create a heavy APIClient (which sets up SSL contexts).
+            icon_path = self.shared_image_manager._get_cache_path(feed.icon_url)
+            
+            if not icon_path.exists():
+                client = APIClient(feed)
+                await self.shared_image_manager.get_image_b64(feed.icon_url, api_client=client)
+                await client.close()
+            
+            if icon_path.exists():
+                pixmap = QPixmap(str(icon_path))
                 if not pixmap.isNull():
                     feed._cached_icon = pixmap
                     if item:
                         item.setIcon(QIcon(pixmap))
                     self.icon_loaded.emit(feed.id, pixmap)
-            await client.close()
         except: pass
 
     def add_feed(self):

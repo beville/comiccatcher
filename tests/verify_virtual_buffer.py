@@ -15,7 +15,10 @@ def test_virtual_buffer():
     
     # 1. Load a real Codex feed with many items
     path = "/home/tony/cc/test/feeds/crawls/codex/codex_opds_v2.0_p_0_1_16e2638808bc7ba2.json"
-    url = "https://anville.duckdns.org:2700/codex/opds/v2.0/p/0/1?topGroup=p"
+    url = os.environ.get("CC_CODEX_SERIES_URL")
+    if not url:
+        print("❌ FAILED: CC_CODEX_SERIES_URL must be set.")
+        sys.exit(1)
     
     with open(path) as f:
         feed = OPDSFeed(**json.load(f))

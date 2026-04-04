@@ -74,31 +74,50 @@ class PagedFeedView(BaseFeedSubView):
         # Immediate update instead of debounced
         self._do_recalculate_heights()
 
+    def reapply_theme(self):
+        """Refreshes themed elements in all active sections."""
+        theme = ThemeManager.get_current_theme_colors()
+        from ui.components.collapsible_section import CollapsibleSection
+        for section in self.findChildren(CollapsibleSection):
+            if hasattr(section, 'header_label'):
+                section.header_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold; color: {theme['text_main']};")
+            if hasattr(section, 'btn_toggle'):
+                section._update_ui_state()
+        
+        for view in self._section_views:
+            view.viewport().update()
+        self.update()
+
     def render(self, page: FeedPage):
         self._clear_content()
         self._section_views.clear()
         
         # UI-side Layout Heuristics
-        # If there's only one section and it's paginated, it's a GRID.
-        # If there are many items in a section, it's a GRID.
+        main_sec = page.main_section
         multi_section = len(page.sections) > 1
+        is_dash = page.is_dashboard or multi_section
         
+        logger.debug(f"PagedFeedView: Interpreting '{page.title}' - is_dashboard={page.is_dashboard}, multi_section={multi_section} (Result: is_dash={is_dash}), main_sec='{main_sec.title if main_sec else 'None'}'")
+
         for section in page.sections:
             # Heuristic: Determine layout
-            # 1. If it's explicitly a main results set (next_url or many items), use GRID.
-            # 2. If it's a Dashboard (start page) with many sections, small ones stay as RIBBONS.
-            is_paginated = bool(section.next_url) or (section.total_items or 0) > (section.items_per_page or 50)
+            sid = section.section_id
             
-            if not multi_section:
-                # Single-section feeds (e.g. "All Series") are always GRIDs
-                layout = SectionLayout.GRID
-            elif is_paginated:
-                # Paginated sections are always GRIDs
+            # Robust pagination check:
+            # ONLY consider it paginated if it has an explicit NEXT link.
+            # Large total_items alone should not force a grid on a dashboard if we only have a few items.
+            is_paginated = bool(section.next_url)
+            
+            # Use GRID if:
+            # - It's NOT a dashboard
+            # - It IS paginated (has more pages to load)
+            # - It's the designated 'Main' section (which now also respects item counts)
+            if not is_dash or is_paginated or (main_sec and sid == main_sec.section_id):
                 layout = SectionLayout.GRID
             else:
-                # Small, non-paginated sections on a dashboard are RIBBONs
                 layout = SectionLayout.RIBBON
-                
+            
+            logger.debug(f"  Section '{section.title}': layout={'GRID' if layout == SectionLayout.GRID else 'RIBBON'} (paginated={is_paginated}, items={len(section.items)})")
             self._add_section(section, layout)
             
         self.content_layout.addWidget(self._spacer)
@@ -162,7 +181,7 @@ class PagedFeedView(BaseFeedSubView):
         
         model.set_sections([section])
         model.set_items_for_page(1, section.items)
-        model.cover_request_needed.connect(self._on_cover_request)
+        model.cover_request_needed.connect(self.cover_request_needed.emit)
         
         view.clicked.connect(lambda idx, m=model: self._on_item_clicked(idx, m))
 

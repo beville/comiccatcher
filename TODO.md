@@ -16,7 +16,6 @@
 - [ ] **High-DPI Validation**: Verify toolbar and card layouts on high-resolution displays with OS scaling.
 - [ ] **Reader Polish**: Implement smooth transitions between pages or "manga mode" (RtL) enhancements, as well as scrolling mode (infinite comics)
 - [ ] **Reader COntrols**: Better control for zooming and navitaing while zoomed. i.e. Ctrl+wheel.   or wheel acting different for higher zoom levels.   
-- [ ] **Reader Image Display**: investigae higher quality re-scaling to avoid artifactsA
 
 ## Features
 - [ ] **Advanced Filtering**: Add a search/filter bar to the Library view toolbar.

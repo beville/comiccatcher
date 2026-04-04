@@ -175,7 +175,6 @@ class LibrarySection(CollapsibleSection):
                 item.setData(Qt.ItemDataRole.UserRole + 1, (r.get("current_page") or 0, r.get("page_count") or 0))
                 item.setData(Qt.ItemDataRole.UserRole + 2, (card_primary, secondary))
                 item.setIcon(ThemeManager.get_icon("book"))
-                item.setToolTip(display_text)
                 self.list_widget.addItem(item)
                 try:
                     asyncio.create_task(self._load_thumb(Path(r["file_path"]), item))
@@ -187,7 +186,6 @@ class LibrarySection(CollapsibleSection):
                 item.setData((r.get("current_page") or 0, r.get("page_count") or 0), Qt.ItemDataRole.UserRole + 1)
                 item.setData((card_primary, secondary), Qt.ItemDataRole.UserRole + 2)
                 item.setIcon(ThemeManager.get_icon("book"))
-                item.setToolTip(display_text)
                 self.model.appendRow(item)
                 try:
                     asyncio.create_task(self._load_thumb(Path(r["file_path"]), item))
@@ -1080,7 +1078,6 @@ class LocalLibraryView(BaseBrowserView):
                         item.setData(Qt.ItemDataRole.UserRole + 2, (card_primary, secondary))
 
                     item.setIcon(ThemeManager.get_icon("book"))
-                    item.setToolTip(display_text)
                     try:
                         asyncio.create_task(self._load_thumb_for_item(entry.path, item))
                     except RuntimeError:
@@ -1237,7 +1234,6 @@ class LocalLibraryView(BaseBrowserView):
                 item.setData(Qt.ItemDataRole.UserRole + 2, (card_primary, secondary))
 
                 item.setIcon(ThemeManager.get_icon("book"))
-                item.setToolTip(display_text)
                 self.alpha_list.addItem(item)
                 try:
                     asyncio.create_task(self._load_thumb_for_item(Path(r["file_path"]), item))

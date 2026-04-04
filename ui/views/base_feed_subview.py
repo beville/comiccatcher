@@ -14,6 +14,7 @@ class BaseFeedSubView(QWidget):
     """
     item_clicked = pyqtSignal(FeedItem, list) # item, context_pubs
     navigate_requested = pyqtSignal(str, str, bool) # url, title, replace
+    cover_request_needed = pyqtSignal(str)
 
     def __init__(self, image_manager, collapsed_sections: Set[str], parent=None):
         super().__init__(parent)
@@ -70,8 +71,3 @@ class BaseFeedSubView(QWidget):
                 if itm and itm.raw_pub:
                     context_pubs.append(itm.raw_pub)
         return context_pubs
-
-    def _on_cover_request(self, url: str):
-        """Pass-through to the parent FeedBrowser's cover manager."""
-        if hasattr(self.parent(), '_on_cover_request'):
-            self.parent()._on_cover_request(url)

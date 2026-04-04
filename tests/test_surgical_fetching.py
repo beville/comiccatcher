@@ -22,8 +22,12 @@ async def drive_surgical_test():
     
     # 1. TEST CONTEXT ISOLATION
     # Rapidly switch between two feeds
-    url_issues = "https://anville.duckdns.org:2700/codex/opds/v2.0/s/0/1?topGroup=s"
-    url_series = "https://anville.duckdns.org:2700/codex/opds/v2.0/p/0/1?topGroup=p"
+    url_issues = os.environ.get("CC_CODEX_ISSUES_URL")
+    url_series = os.environ.get("CC_CODEX_SERIES_URL")
+    
+    if not url_issues or not url_series:
+        print("❌ FAILED: CC_CODEX_ISSUES_URL and CC_CODEX_SERIES_URL must be set.")
+        sys.exit(1)
     
     print(f"Switching Context: Issues -> Series...")
     # Fire load for Issues

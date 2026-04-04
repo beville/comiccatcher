@@ -86,7 +86,6 @@ class ScrolledFeedView(BaseFeedSubView):
 
     status_updated = pyqtSignal(str)
     busy_updated = pyqtSignal(bool)
-    cover_request_needed = pyqtSignal(str)
 
     # ------------------------------------------------------------------ init --
 
@@ -149,18 +148,12 @@ class ScrolledFeedView(BaseFeedSubView):
         self._pending_page_requests.clear()
 
         # Identify the main (large / sparse) section
-        main = None
-        for s in page.sections:
-            if (s.total_items or 0) > UIConstants.LARGE_SECTION_THRESHOLD or len(s.items) > UIConstants.LARGE_SECTION_THRESHOLD:
-                main = s
-                break
-        if not main and page.sections:
-            grids = [s for s in page.sections
-                     if getattr(s, 'layout', None) == SectionLayout.GRID]
-            main = max(grids, key=lambda s: len(s.items)) if grids else page.sections[-1]
+        main = page.main_section
 
         self._main_grid_sid  = main.section_id if main else None
         self._items_per_page = (main.items_per_page or 100) if main else 100
+        
+        logger.debug(f"ScrolledFeedView: Interpreting '{page.title}' - is_dashboard={page.is_dashboard}, main_grid_section='{main.title if main else 'None'}'")
 
         self._clear_section_widgets()
         self._build_section_widgets(page.sections)
@@ -200,9 +193,13 @@ class ScrolledFeedView(BaseFeedSubView):
                 d.show_labels = show
             view.viewport().update()
             view.doItemsLayout()
+        
+        # Recalibrate heights immediately based on new label state
         self._recompute_positions()
         self._update_scrollbar()
         self._update_layout()
+        # Calibrate actual grid heights (after Qt layout settles)
+        QTimer.singleShot(50, self._calibrate_grid_heights)
 
     def expand_all(self):
         for desc in self._descs:
@@ -365,7 +362,7 @@ class ScrolledFeedView(BaseFeedSubView):
     # ---------------------------------------------------- widget construction --
 
     def _build_section_widgets(self, sections: List[FeedSection]):
-        header_h = UIConstants.TOGGLE_BUTTON_SIZE + UIConstants.SECTION_HEADER_MARGIN_TOP
+        header_h = UIConstants.SECTION_HEADER_HEIGHT
 
         # Locate parent FeedBrowser
         browser = self.parent()
@@ -380,6 +377,7 @@ class ScrolledFeedView(BaseFeedSubView):
 
             action_widget = None
             if getattr(sec, 'self_url', None) and browser:
+                # Use default arguments in lambda to capture the CURRENT values of sec.self_url and sec.title
                 btn_all = browser.create_action_button(
                     "See All",
                     lambda _, u=sec.self_url, t=sec.title: self.navigate_requested.emit(u, t, False)
@@ -401,6 +399,7 @@ class ScrolledFeedView(BaseFeedSubView):
             if is_grid:
                 self._grids[sid] = self._make_grid_view(sec)
             else:
+                logger.debug(f"  Building non-scrolled section: '{sec.title}' (sid={sid}, items={len(sec.items)})")
                 self._ribbons[sid] = self._make_ribbon(sec)
 
             self._descs.append(_SectionDesc(section=sec, header_h=header_h, is_grid=is_grid))
@@ -443,6 +442,7 @@ class ScrolledFeedView(BaseFeedSubView):
         rmodel = FeedBrowserModel(items_per_page=max(1, len(sec.items)))
         rmodel.set_items_for_page(1, sec.items)
         ribbon.setModel(rmodel)
+        rmodel.cover_request_needed.connect(self.cover_request_needed.emit)
         ribbon.setItemDelegate(
             FeedCardDelegate(ribbon, self.image_manager, self._show_labels))
         ribbon.clicked.connect(
@@ -508,7 +508,7 @@ class ScrolledFeedView(BaseFeedSubView):
         if not self.isVisible():
             return
             
-        self._ensure_covers_for_grid()
+        self._ensure_visible_covers()
         self._handle_fetching()
         
         model = self._models.get(self._main_grid_sid)
@@ -560,21 +560,44 @@ class ScrolledFeedView(BaseFeedSubView):
                 
                 self.status_updated.emit(status)
 
-    def _ensure_covers_for_grid(self):
-        view  = self._grids.get(self._main_grid_sid)
-        model = self._models.get(self._main_grid_sid)
-        if not view or not model or not view.isVisible():
-            return
-        vp    = view.viewport()
-        fi    = view.indexAt(QPoint(10, 10))
-        li    = view.indexAt(QPoint(vp.width() - 10, vp.height() - 10))
-        first = fi.row() if fi.isValid() else 0
-        last  = (li.row() if li.isValid()
-                 else min(model.rowCount() - 1, first + 50))
-        for row in range(first, last + 1):
-            item = model.get_item(row)
-            if isinstance(item, FeedItem) and item.cover_url:
-                self.cover_request_needed.emit(item.cover_url)
+    def _ensure_visible_covers(self):
+        # 1. Check all Grids
+        for sid, view in self._grids.items():
+            if not view.isVisible(): continue
+            model = self._models.get(sid)
+            if not model: continue
+            
+            vp = view.viewport()
+            fi = view.indexAt(QPoint(10, 10))
+            li = view.indexAt(QPoint(vp.width() - 10, vp.height() - 10))
+            first = fi.row() if fi.isValid() else 0
+            last  = (li.row() if li.isValid()
+                     else min(model.rowCount() - 1, first + 50))
+            
+            for row in range(first, last + 1):
+                item = model.get_item(row)
+                if isinstance(item, FeedItem) and item.cover_url:
+                    self.cover_request_needed.emit(item.cover_url)
+
+        # 2. Check all Ribbons
+        for sid, ribbon in self._ribbons.items():
+            if not ribbon.isVisible(): continue
+            model = ribbon.model()
+            if not model: continue
+            
+            # Ribbons usually have all items 'painted' or reachable via scroll
+            # We trigger the first visible set
+            vp = ribbon.viewport()
+            fi = ribbon.indexAt(QPoint(10, 10))
+            li = ribbon.indexAt(QPoint(vp.width() - 10, vp.height() - 10))
+            first = fi.row() if fi.isValid() else 0
+            last  = (li.row() if li.isValid()
+                     else min(model.rowCount() - 1, first + 10))
+            
+            for row in range(first, last + 1):
+                item = model.get_item(row)
+                if isinstance(item, FeedItem) and item.cover_url:
+                    self.cover_request_needed.emit(item.cover_url)
 
     def _handle_fetching(self):
         if not self._pagination_template:
@@ -583,42 +606,86 @@ class ScrolledFeedView(BaseFeedSubView):
         model = self._models.get(self._main_grid_sid)
         if not view or not model or not view.isVisible():
             return
-        vp    = view.viewport()
-        fi    = view.indexAt(QPoint(10, 10))
-        li    = view.indexAt(QPoint(vp.width() - 10, vp.height() - 10))
-        first = fi.row() if fi.isValid() else 0
-        last  = (li.row() if li.isValid()
-                 else min(model.rowCount() - 1, first + 50))
 
-        ipp     = self._items_per_page
+        vp    = view.viewport()
+        vp_w  = vp.width()
+        vp_h  = vp.height()
+        
+        # 1. Determine what's actually visible in the grid viewport
+        # We use multiple points to be robust against gutters/margins
+        fi = view.indexAt(QPoint(UIConstants.VIEWPORT_MARGIN, UIConstants.VIEWPORT_MARGIN))
+        if not fi.isValid():
+            fi = view.indexAt(QPoint(UIConstants.VIEWPORT_MARGIN * 2, UIConstants.VIEWPORT_MARGIN * 2))
+        
+        li = view.indexAt(QPoint(vp_w - UIConstants.VIEWPORT_MARGIN, vp_h - UIConstants.VIEWPORT_MARGIN))
+        if not li.isValid():
+            li = view.indexAt(QPoint(vp_w // 2, vp_h - UIConstants.GRID_GUTTER))
+
+        ipp = self._items_per_page
+        if fi.isValid():
+            first = fi.row()
+        else:
+            # Fallback: estimate from scrollbar
+            inner = view.verticalScrollBar().value()
+            cols, row_h, _ = self.get_grid_layout_info(vp_w)
+            first = max(0, (inner // row_h) * cols)
+
+        if li.isValid():
+            last = li.row()
+        else:
+            # Fallback: estimate from viewport height
+            cols, row_h, _ = self.get_grid_layout_info(vp_w)
+            visible_rows = math.ceil(vp_h / row_h)
+            last = min(model.rowCount() - 1, first + (visible_rows * cols))
+
+        # 2. Convert visible rows to page range
         b       = UIConstants.SPARSE_FETCH_BUFFER
         first_p = first // ipp + 1
         last_p  = last  // ipp + 1
-        visible = set(range(max(1, first_p - b), last_p + b + 1))
+        visible_p = set(range(max(1, first_p - b), last_p + b + 1))
 
+        # 3. Cancel tasks no longer in the extended visible buffer
         to_cancel = [k for k in self._active_sparse_tasks
-                     if int(k.split('_')[1]) not in visible]
+                     if int(k.split('_')[1]) not in visible_p]
         for k in to_cancel:
             self._active_sparse_tasks.pop(k).cancel()
         
         if to_cancel:
             self.busy_updated.emit(len(self._active_sparse_tasks) > 0)
 
-        if self._pending_page_requests:
-            to_fetch = [p for p in reversed(self._pending_page_requests)
-                        if p in visible][:UIConstants.MAX_CONCURRENT_FETCHES]
-            self._pending_page_requests.clear()
-            for p in to_fetch:
-                val = (p - 1) * ipp if self._is_offset_based else p
-                url = self._pagination_template.replace("{page}", str(val))
-                key = f"{self._current_context_id}_{p}"
-                if key not in self._active_sparse_tasks:
-                    task = asyncio.create_task(
-                        self._fetch_page(p, url, self._current_context_id))
-                    self._active_sparse_tasks[key] = task
-                    self.busy_updated.emit(True)
-                    task.add_done_callback(
-                        lambda t, k=key: self._on_task_done(t, k))
+        # 4. Identify missing pages in the STRICT visible range (ignore buffer for auto-trigger)
+        # We also still respect _pending_page_requests from model signals
+        needed = set(range(first_p, last_p + 1))
+        needed.update(self._pending_page_requests)
+        
+        # Filter to only things currently visible (or very near) to avoid over-fetching during fast scrubs
+        to_fetch_candidates = [p for p in needed if p in visible_p]
+        
+        # Prioritize strictly visible pages over buffered ones
+        strictly_visible = set(range(first_p, last_p + 1))
+        to_fetch_candidates.sort(key=lambda p: 0 if p in strictly_visible else 1)
+
+        to_fetch = []
+        for p in to_fetch_candidates:
+            key = f"{self._current_context_id}_{p}"
+            if key not in self._active_sparse_tasks and not model.is_page_loaded(p):
+                to_fetch.append(p)
+                if len(to_fetch) >= UIConstants.MAX_CONCURRENT_FETCHES:
+                    break
+
+        self._pending_page_requests.clear()
+        
+        for p in to_fetch:
+            val = (p - 1) * ipp if self._is_offset_based else p
+            url = self._pagination_template.replace("{page}", str(val))
+            key = f"{self._current_context_id}_{p}"
+            
+            task = asyncio.create_task(
+                self._fetch_page(p, url, self._current_context_id))
+            self._active_sparse_tasks[key] = task
+            self.busy_updated.emit(True)
+            task.add_done_callback(
+                lambda t, k=key: self._on_task_done(t, k))
 
     async def _fetch_page(self, page_idx: int, url: str, ctx_id: float):
         try:
@@ -636,9 +703,12 @@ class ScrolledFeedView(BaseFeedSubView):
             logger.error(f"Fetch failed: {e}")
 
     def _on_task_done(self, task, key):
-        self._active_sparse_tasks.pop(key, None)
-        self.busy_updated.emit(len(self._active_sparse_tasks) > 0)
-        self._update_status()
+        try:
+            self._active_sparse_tasks.pop(key, None)
+            self.busy_updated.emit(len(self._active_sparse_tasks) > 0)
+            self._update_status()
+        except RuntimeError:
+            pass # Object deleted
 
     def _on_page_needed(self, page_idx: int):
         if page_idx not in self._pending_page_requests:
@@ -650,3 +720,13 @@ class ScrolledFeedView(BaseFeedSubView):
         for t in self._active_sparse_tasks.values():
             t.cancel()
         self._active_sparse_tasks.clear()
+
+    def reapply_theme(self):
+        """Refreshes themed elements in all cached widgets."""
+        for hdr in self._headers.values():
+            hdr.reapply_theme()
+        for ribbon in self._ribbons.values():
+            ribbon.viewport().update()
+        for grid in self._grids.values():
+            grid.viewport().update()
+        self._vp.update()

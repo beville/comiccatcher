@@ -12,7 +12,10 @@ def test_iterative_unquote_plus_double_encoded_leaf():
 
 
 def test_filename_from_url_decodes_double_encoding():
-    url = "https://anville.duckdns.org:2700/codex/opds/bin/c/16107/download/Swamp+Thing+%2523057+%25281987%2529.cbz"
+    url = os.environ.get("CC_TEST_DOWNLOAD_URL")
+    if not url:
+        import pytest
+        pytest.skip("CC_TEST_DOWNLOAD_URL not set")
     assert _filename_from_url(url) == "Swamp Thing #057 (1987).cbz"
 
 

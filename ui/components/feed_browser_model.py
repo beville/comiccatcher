@@ -144,6 +144,10 @@ class FeedBrowserModel(QAbstractListModel):
         if not index.isValid(): return None
         row = index.row()
         
+        # Suppress tooltips for cards in the feed view
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return None
+
         # 1. Handle Composite Type Role
         if role == self.CompositeTypeRole:
             if row < len(self._logical_items):
@@ -205,16 +209,25 @@ class FeedBrowserModel(QAbstractListModel):
                 return item
                 
         # Fallback for simple models (e.g. ribbon) that use sparse_items directly
-        return self._sparse_items.get(row)
+        item = self._sparse_items.get(row)
+        if role == self.ItemDataRole and item and item.cover_url:
+            if item.cover_url not in self._requested_covers:
+                self._requested_covers.add(item.cover_url)
+                self.cover_request_needed.emit(item.cover_url)
+        return item
 
     def set_items_for_page(self, page_index: int, items: List[FeedItem], offset: int = 0):
         """Injects fetched items into the sparse buffer."""
         start_row = (page_index - 1) * self._items_per_page
         for i, item in enumerate(items):
             self._sparse_items[start_row + i] = item
-        
+
         self.layoutChanged.emit() # Notify the view
 
+    def is_page_loaded(self, page_index: int) -> bool:
+        """Checks if a page has already been loaded into the sparse buffer."""
+        start_row = (page_index - 1) * self._items_per_page
+        return start_row in self._sparse_items
     def clear(self):
         self.beginResetModel()
         self._sparse_items = {}

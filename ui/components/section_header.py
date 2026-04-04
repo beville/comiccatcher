@@ -64,6 +64,11 @@ class SectionHeader(QWidget):
 
         self._update_ui_state()
 
+    def reapply_theme(self):
+        theme = ThemeManager.get_current_theme_colors()
+        self.header_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold; color: {theme['text_main']};")
+        self._update_ui_state()
+
     def toggle(self):
         self._is_collapsed = not self._is_collapsed
         self._update_ui_state()

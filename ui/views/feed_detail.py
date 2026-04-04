@@ -303,21 +303,28 @@ class FeedDetailView(BaseDetailView):
                 self.info_layout.addWidget(pub_label)
 
             # Action Buttons
-            manifest_url = next((urljoin(base_url, l.href) for l in pub.links if l.type in ["application/webpub+json", "application/divina+json"]), base_url)
-            btn_read = self._add_read_button(lambda: self.on_read(pub, manifest_url, self._context_pubs), "Read Now")
+            manifest_url = next((urljoin(base_url, l.href) for l in pub.links if l.type in ["application/webpub+json", "application/divina+json"]), None)
+            btn_read = self._add_read_button(lambda: self.on_read(pub, manifest_url or base_url, self._context_pubs), "Read Now")
             btn_read.setObjectName("primary_button")
             
+            # Disable Read button if no reading order and no webpub manifest
+            has_reading_order = pub.readingOrder and len(pub.readingOrder) > 0
+            btn_read.setEnabled(has_reading_order or manifest_url is not None)
+            
             download_url = next((urljoin(base_url, l.href) for l in pub.links if l.rel == "http://opds-spec.org/acquisition" or (l.type and "cbz" in l.type)), None)
+            
+            btn_down = QPushButton("Download")
+            btn_down.setObjectName("secondary_button")
+            btn_down.setMinimumHeight(40)
+            btn_down.setEnabled(download_url is not None)
             if download_url:
-                btn_down = QPushButton("Download")
-                btn_down.setMinimumHeight(40)
                 btn_down.clicked.connect(lambda: self.on_start_download(pub, download_url))
-                self.actions_layout.insertWidget(1, btn_down)
-                
-                # Check if already downloaded
-                self._file_size_str = None
-                if self.db:
-                    asyncio.create_task(self._check_for_local_copy(pub, download_url))
+            self.actions_layout.insertWidget(1, btn_down)
+            
+            # Check if already downloaded (if link exists)
+            self._file_size_str = None
+            if download_url and self.db:
+                asyncio.create_task(self._check_for_local_copy(pub, download_url))
 
             # Progression & Page Count
             self._add_progression_label()
@@ -537,13 +544,11 @@ class FeedDetailView(BaseDetailView):
             base_feed_url = self.api_client.profile.get_base_url()
             feed_page = FeedReconciler.reconcile(feed, base_feed_url)
             
-            items = []
-            for section in feed_page.sections:
-                items.extend(section.items)
+            # Use centralized main_section helper to find relevant items
+            main_sec = feed_page.main_section
+            items = main_sec.items if main_sec else []
             
             if not items:
-                # We don't have a good way to show "No items" in the model easily here without custom items
-                # so we just leave it empty or could add a dummy item
                 return
 
             model.update_total_count(len(items[:15]))

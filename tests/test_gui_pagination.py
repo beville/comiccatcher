@@ -26,7 +26,10 @@ async def drive_pagination_test():
     await asyncio.sleep(2)
     
     # 2. Target the Large Series Feed (Known to have many pages)
-    target_url = "https://anville.duckdns.org:2700/codex/opds/v2.0/p/0/1?topGroup=p"
+    target_url = os.environ.get("CC_CODEX_SERIES_URL")
+    if not target_url:
+        print("❌ FAILED: CC_CODEX_SERIES_URL must be set.")
+        sys.exit(1)
     print(f"Navigating to: {target_url}")
     await window.feed_browser.load_url(target_url)
     await asyncio.sleep(2)

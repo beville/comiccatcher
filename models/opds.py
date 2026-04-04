@@ -71,9 +71,10 @@ class Group(BaseModel):
 
 class OPDSFeed(BaseModel):
     model_config = ConfigDict(extra='allow')
-    metadata: Metadata
+    metadata: Optional[Metadata] = None
     links: List[Link]
     publications: Optional[List[Publication]] = None
     navigation: Optional[List[Link]] = None
     groups: Optional[List[Group]] = None
     facets: Optional[List[Dict[str, Any]]] = None
+    authentication: Optional[List[Dict[str, Any]]] = None
