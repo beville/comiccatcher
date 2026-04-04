@@ -1,4 +1,4 @@
-from ui.local_comicbox import flatten_comicbox, subtitle_from_flat
+from comiccatcher.ui.local_comicbox import flatten_comicbox, subtitle_from_flat
 
 
 def test_flatten_comicbox_nested_shape():

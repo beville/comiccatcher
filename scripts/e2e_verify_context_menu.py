@@ -11,15 +11,15 @@ from qasync import QEventLoop
 current_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(current_dir))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
-from ui.theme_manager import UIConstants
-from ui.views.feed_browser import FeedBrowser
-from ui.views.paged_feed_view import PagedFeedView
-from ui.views.scrolled_feed_view import ScrolledFeedView
-from ui.components.collapsible_section import CollapsibleSection
-from ui.components.section_header import SectionHeader
-import logger
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
+from comiccatcher.ui.theme_manager import UIConstants
+from comiccatcher.ui.views.feed_browser import FeedBrowser
+from comiccatcher.ui.views.paged_feed_view import PagedFeedView
+from comiccatcher.ui.views.scrolled_feed_view import ScrolledFeedView
+from comiccatcher.ui.components.collapsible_section import CollapsibleSection
+from comiccatcher.ui.components.section_header import SectionHeader
+import comiccatcher.logger as logger
 
 async def run_verification():
     print("🧪 Starting Robust E2E Context Menu Verification...")
@@ -36,9 +36,9 @@ async def run_verification():
     codex_feed = next((f for f in config.feeds if "codex" in f.name.lower()), config.feeds[0])
     test_url = urllib.parse.urljoin(codex_feed.url.rstrip('/') + "/", "p/0/1?topGroup=p")
     
-    from api.opds_v2 import OPDS2Client
-    from api.client import APIClient
-    from api.feed_reconciler import FeedReconciler
+    from comiccatcher.api.opds_v2 import OPDS2Client
+    from comiccatcher.api.client import APIClient
+    from comiccatcher.api.feed_reconciler import FeedReconciler
     
     api = APIClient(codex_feed)
     opds = OPDS2Client(api)

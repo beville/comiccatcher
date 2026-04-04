@@ -6,10 +6,10 @@ from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
 
 # Ensure we can import from the current directory
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
 
 async def drive_surgical_test():
     print("--- STARTING SURGICAL FETCHING TEST ---")

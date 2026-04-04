@@ -1,27 +1,35 @@
 # ComicCatcher TODO
 
-## UI & UX
-...
-## Technical Debt & Refactoring
-- [x] **Debt Audit**: Identified "band-aid" solutions and redundancy.
-    - [!] **Silent Failures**: 20+ `except: pass` blocks found in `api/local_db.py`, `api/download_manager.py`, and views. Need proper logging or recovery.
-    - [!] **Heuristic Sprawl**: Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
-    - [!] **Hardcoded Server Hacks**: "komgaandroid" URL fix in `feed_management.py`.
-    - [!] **SVG Hacks**: String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.
-    - [ ] **Feed Data Model**: Bridge the gap between `Publication` (OPDS) and `dict` (Local) so views can share 100% of rendering logic.
-- [ ] **Address Pixel-Crafted Fragility**: Transition from hardcoded pixel math (e.g., `y -= 12`) to metric-relative logic.
-    - [ ] Use `QFontMetrics` to calculate offsets proportional to font size.
-    - [ ] Replace `elidedText` heuristics with `QTextLayout` for robust multi-line elision.
-    - [ ] Centralize remaining magic numbers into `UIConstants`.
-- [ ] **High-DPI Validation**: Verify toolbar and card layouts on high-resolution displays with OS scaling.
-- [ ] **Reader Polish**: Implement smooth transitions between pages or "manga mode" (RtL) enhancements, as well as scrolling mode (infinite comics)
-- [ ] **Reader COntrols**: Better control for zooming and navitaing while zoomed. i.e. Ctrl+wheel.   or wheel acting different for higher zoom levels.   
+* adjacentbook popover - use title (and maybe subtitle)
+* details views - handle wide covers
+* details views - use more metadata (web, genre...)
 
-## Features
-- [ ] **Advanced Filtering**: Add a search/filter bar to the Library view toolbar.
+* test stump and komga more
+* komga/stump - better metadata.  Find series and position/issue number for display
+
+* keystrokes for feed and library
+* reader keystrokes and controls fixing
+
+* scrolled view optimize page and thumb fetching
+
+* add support for cbr, cbt.  
+* add support for pdf.  
+* add support for minimal epub 
 
 
-## Cross Platform Testing
-- [ ] **Windows**: test on windows VM
-- [ ] **MacOS**: how do this without a mac??
+* pypi account
+* windows and mac testing
 
+* reader UI re-evaluate
+
+* fix  "komgaandroid" URL hack in `feed_management.py`.
+* Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
+* String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.
+* more consolidation/deduplcation of code
+* less magic numbers
+* maybe more  `QFontMetrics` to calculate offsets proportional to font size.
+* better text eliding via QTextLayout, maybe
+
+## Future
+* OPDS 1.2 
+* Search/filter in library

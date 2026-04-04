@@ -42,24 +42,36 @@ def run_import_test():
     """Step 2: Lightweight Import Test (Catch Dynamic Errors)"""
     print_step("Running Import Integrity Test")
     
-    # We try to import every Python file in current directory
+    # We try to import every Python file in src/
     # This catches ModuleNotFoundError and AttributeError at class/module level.
-    base_dir = Path(".")
+    base_dir = Path("src")
+    if not base_dir.exists():
+        # Fallback for if script is run from inside scripts/
+        base_dir = Path("../src")
+        
+    if not base_dir.exists():
+        print("❌ Error: Could not find src directory.")
+        return False
+
     sys.path.insert(0, str(base_dir.absolute()))
     
     python_files = list(base_dir.glob("**/*.py"))
     failed = []
     
     for py_file in python_files:
-        if py_file.name == "__init__.py" or "pycache" in str(py_file) or "test" in str(py_file) or "venv" in str(py_file):
+        if py_file.name == "__init__.py" or "pycache" in str(py_file):
             continue
             
-        # Convert path to module string: ui/views/settings.py -> ui.views.settings
-        module_path = str(py_file.with_suffix("")).replace(os.sep, ".")
+        # Convert path to module string: src/comiccatcher/ui/views/settings.py -> comiccatcher.ui.views.settings
+        # relative_to(base_dir) removes the 'src/' part
+        module_path = str(py_file.relative_to(base_dir).with_suffix("")).replace(os.sep, ".")
         
         try:
             # We use a subprocess for each import to prevent one failure from stopping the script
-            subprocess.check_output([sys.executable, "-c", f"import {module_path}"], stderr=subprocess.STDOUT)
+            # Ensure the subprocess also has the correct PYTHONPATH
+            env = os.environ.copy()
+            env["PYTHONPATH"] = f"{base_dir.absolute()}{os.pathsep}{env.get('PYTHONPATH', '')}"
+            subprocess.check_output([sys.executable, "-c", f"import {module_path}"], stderr=subprocess.STDOUT, env=env)
         except subprocess.CalledProcessError as e:
             failed.append((module_path, e.output.decode().splitlines()[-1]))
 

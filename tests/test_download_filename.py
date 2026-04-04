@@ -1,4 +1,4 @@
-from api.download_manager import (
+from comiccatcher.api.download_manager import (
     _filename_from_content_disposition,
     _filename_from_url,
     _iterative_unquote_plus,

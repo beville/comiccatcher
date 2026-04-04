@@ -10,8 +10,8 @@ from qasync import QEventLoop
 current_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(current_dir))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
 
 def main():
     print("🚀 Performing Quick Launch Test (5s)...")

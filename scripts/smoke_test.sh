@@ -20,9 +20,11 @@ echo "🚀 Launching ComicCatcher Smoke Test (5s timeout)..."
 
 # Execute in headless/offscreen mode
 export QT_QPA_PLATFORM=offscreen
+# Ensure package namespace is findable
+export PYTHONPATH="$BASE_DIR/src:$PYTHONPATH"
 
 # Execute the application with a 5 second timeout
 # If the app crashes or fails to start, exit code will be non-zero (set -e)
-$VENV_PYTHON main.py --timeout 5
+$VENV_PYTHON src/comiccatcher/main.py --timeout 5
 
 echo "✅ Smoke Test: App launched and exited cleanly."

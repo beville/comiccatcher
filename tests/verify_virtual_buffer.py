@@ -3,12 +3,12 @@ import sys
 import os
 
 # Ensure paths are correct
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 
-from models.opds import OPDSFeed
-from api.feed_reconciler import FeedReconciler
-from ui.components.feed_browser_model import FeedBrowserModel
-from models.feed_page import ItemType
+from comiccatcher.models.opds import OPDSFeed
+from comiccatcher.api.feed_reconciler import FeedReconciler
+from comiccatcher.ui.components.feed_browser_model import FeedBrowserModel
+from comiccatcher.models.feed_page import ItemType
 
 def test_virtual_buffer():
     print("--- TESTING VIRTUAL BUFFER (Zero-Jump) ---")

@@ -3,10 +3,10 @@ import sys
 import os
 
 # Ensure paths are correct
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 
-from models.opds import OPDSFeed
-from api.feed_reconciler import FeedReconciler
+from comiccatcher.models.opds import OPDSFeed
+from comiccatcher.api.feed_reconciler import FeedReconciler
 
 def get_sec_id(local_file, url):
     path = f"/home/tony/cc/test/feeds/crawls/codex/{local_file}"

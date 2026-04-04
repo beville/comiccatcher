@@ -9,15 +9,15 @@ from pathlib import Path
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 # Ensure we can find the app modules
-sys.path.insert(0, os.getcwd())
-sys.path.insert(0, os.path.join(os.getcwd(), "comiccatcher"))
+sys.path.insert(0, os.path.join(os.getcwd(), 'src'))
+sys.path.insert(0, os.path.join(os.getcwd(), "src"))
 
 from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
-from config import ConfigManager, CACHE_DIR
-from ui.app_layout import MainWindow, ViewIndex
-from models.feed import FeedProfile
-import logger
+from comiccatcher.config import ConfigManager, CACHE_DIR
+from comiccatcher.ui.app_layout import MainWindow, ViewIndex
+from comiccatcher.models.feed import FeedProfile
+import comiccatcher.logger as logger
 import logging
 
 async def drive_app():

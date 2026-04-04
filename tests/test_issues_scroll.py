@@ -4,9 +4,9 @@ import asyncio
 from PyQt6.QtWidgets import QApplication
 from qasync import QEventLoop
 
-sys.path.append(os.getcwd())
-from config import ConfigManager
-from ui.app_layout import MainWindow
+sys.path.append(os.path.join(os.getcwd(), 'src'))
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
 
 async def drive_issues():
     app = QApplication.instance() or QApplication(sys.argv)

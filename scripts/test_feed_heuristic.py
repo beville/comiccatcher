@@ -4,13 +4,13 @@ import os
 import argparse
 
 # Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
-from api.client import APIClient
-from api.opds_v2 import OPDS2Client
-from api.feed_reconciler import FeedReconciler
-from models.feed import FeedProfile
-from ui.theme_manager import UIConstants
+from comiccatcher.api.client import APIClient
+from comiccatcher.api.opds_v2 import OPDS2Client
+from comiccatcher.api.feed_reconciler import FeedReconciler
+from comiccatcher.models.feed import FeedProfile
+from comiccatcher.ui.theme_manager import UIConstants
 
 async def test_url(url, token=None):
     print(f"🧪 Testing URL: {url}")

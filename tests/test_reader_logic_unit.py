@@ -1,4 +1,4 @@
-from ui.reader_logic import (
+from comiccatcher.ui.reader_logic import (
     ReaderSession,
     clamp_index,
     index_from_progression,

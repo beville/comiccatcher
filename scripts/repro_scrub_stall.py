@@ -10,9 +10,9 @@ import logging
 current_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(current_dir))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
-import logger
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
+import comiccatcher.logger as logger
 
 async def drive_app():
     print("🚀 Initializing E2E Scrub Test...")

@@ -1,4 +1,4 @@
-from ui.local_comicbox import generate_comic_labels
+from comiccatcher.ui.local_comicbox import generate_comic_labels
 
 def test_generate_comic_labels_series_focus():
     meta = {

@@ -5,12 +5,12 @@ from unittest.mock import MagicMock, patch
 from PyQt6.QtWidgets import QApplication
 
 # Ensure we can import from the project root
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 sys.path.append(os.path.join(os.getcwd(), "comiccatcher"))
 
-from ui.app_layout import MainWindow
-from config import ConfigManager
-from models.feed_page import FeedItem, ItemType, Link
+from comiccatcher.ui.app_layout import MainWindow
+from comiccatcher.config import ConfigManager
+from comiccatcher.models.feed_page import FeedItem, ItemType, Link
 
 # Create a QApplication instance for testing PyQt widgets
 app = QApplication.instance() or QApplication(sys.argv)

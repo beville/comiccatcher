@@ -14,8 +14,8 @@ from qasync import QEventLoop
 base_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(base_dir))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
 
 async def capture_themes():
     print("🚀 Starting Theme Screenshot Capture (Fast Mode)...")

@@ -2,10 +2,10 @@ import os
 
 import pytest
 
-from api.client import APIClient
-from api.image_manager import ImageManager
-from config import ConfigManager
-from ui.reader_logic import ReaderSession, guess_mime, make_data_url, parse_reading_order, resolve_href
+from comiccatcher.api.client import APIClient
+from comiccatcher.api.image_manager import ImageManager
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.reader_logic import ReaderSession, guess_mime, make_data_url, parse_reading_order, resolve_href
 
 
 def _pick_profile(name: str | None):

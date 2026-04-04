@@ -1,7 +1,7 @@
 import zipfile
 from pathlib import Path
 
-from ui.local_archive import list_cbz_pages, read_cbz_entry_bytes
+from comiccatcher.ui.local_archive import list_cbz_pages, read_cbz_entry_bytes
 
 
 def test_list_cbz_pages_sorts_and_filters(tmp_path: Path):

@@ -1,0 +1,459 @@
+import urllib.parse
+import re
+from typing import List, Optional, Dict, Any
+from comiccatcher.models.opds import OPDSFeed, Publication, Link, Group
+from comiccatcher.models.feed_page import FeedPage, FeedSection, FeedItem, ItemType, SectionLayout
+from comiccatcher.logger import get_logger
+
+logger = get_logger("api.feed_reconciler")
+
+# Threshold for choosing GRID layout over RIBBON for results sets
+# MOVED TO UI LAYER
+
+class FeedReconciler:
+    """
+    Transforms raw OPDS feeds into a unified structure.
+    """
+    
+    @staticmethod
+    def reconcile(feed: OPDSFeed, base_url: str) -> FeedPage:
+        # Fallback title logic: metadata.title -> top-level title -> "Feed"
+        page_title = "Feed"
+        if feed.metadata and feed.metadata.title:
+            page_title = feed.metadata.title
+        elif hasattr(feed, 'title') and getattr(feed, 'title'):
+            page_title = getattr(feed, 'title')
+            
+        sections = []
+        facets = []
+        
+        # Robust logical ID and self/start detection
+        self_url = base_url
+        start_url = None
+        if feed.links:
+            for l in feed.links:
+                rels = [l.rel] if isinstance(l.rel, str) else (l.rel or [])
+                if "self" in rels:
+                    self_url = urllib.parse.urljoin(base_url, l.href)
+                if "start" in rels:
+                    start_url = urllib.parse.urljoin(base_url, l.href)
+        
+        # Dashboard Heuristic: If start link refers to itself (or base_url), it's a dashboard
+        is_dashboard = False
+        if start_url:
+            # Normalize for comparison
+            s_norm = start_url.rstrip('/')
+            self_norm = self_url.rstrip('/')
+            if s_norm == self_norm:
+                is_dashboard = True
+                logger.debug(f"FeedReconciler: Dashboard detected via self-referencing 'start' link: {s_norm}")
+
+        # Sanitize to create a stable ID for the entire logical feed.
+        # Example: /codex/opds/v2.0/p/0/1 -> /codex/opds/v2.0/p/
+        logical_id = re.sub(r'/[a-z]/\d+/\d+', lambda m: m.group(0)[:3], self_url).split('?')[0]
+        
+        logger.debug(f"FeedReconciler: base_url={base_url} -> logical_id={logical_id}")
+
+        has_top_start = any(l.rel == "start" for l in feed.links) if feed.links else False
+        
+        # 0. Extract Facets
+        if hasattr(feed, 'facets') and feed.facets:
+            facets.extend(feed.facets)
+        if feed.groups:
+            for group in feed.groups:
+                if getattr(group, "navigation", None):
+                    has_facet = False
+                    for n in group.navigation:
+                        rel_str = "".join(n.rel or []) if isinstance(n.rel, list) else (n.rel or "")
+                        if "facet" in rel_str or "http://opds-spec.org/facet" in rel_str:
+                            has_facet = True
+                            break
+                    if has_facet:
+                        facets.append(group)
+
+        # 1. Handle Top-level Navigation
+        if feed.navigation:
+            nav_items = []
+            for link in feed.navigation:
+                rel_str = "".join(link.rel or []) if isinstance(link.rel, list) else (link.rel or "")
+                if "start" in rel_str or (link.title and link.title.lower() == "start"):
+                    continue
+                nav_items.append(FeedItem(
+                    type=ItemType.FOLDER,
+                    title=link.title or "Untitled",
+                    raw_link=link,
+                    identifier=link.href
+                ))
+            
+            if nav_items:
+                m = feed.metadata
+                sec_id = (m.identifier if m else None) or f"nav_{logical_id}"
+                
+                # Navigation links are almost never paginated themselves, 
+                # even if the top-level feed has a 'next' link.
+                # Always use the local count for this specific section.
+                total = len(nav_items)
+                next_url = FeedReconciler._find_next(feed.links, base_url)
+                
+                sections.append(FeedSection(
+                    title="Subsections",
+                    section_id=sec_id,
+                    items=nav_items,
+                    total_items=total,
+                    items_per_page=len(nav_items),
+                    current_page=1,
+                    next_url=None # Navigation doesn't page
+                ))
+
+        # 2. Handle Groups
+        if feed.groups:
+            for group in feed.groups:
+                group_items = []
+                if group.publications:
+                    for pub in group.publications:
+                        group_items.append(FeedReconciler._pub_to_item(pub, base_url))
+                
+                if group.navigation:
+                    for link in group.navigation:
+                        rel_str = "".join(link.rel or []) if isinstance(link.rel, list) else (link.rel or "")
+                        if "facet" in rel_str or "http://opds-spec.org/facet" in rel_str: continue
+                        if has_top_start and ("start" in rel_str): continue
+                            
+                        group_items.append(FeedItem(
+                            type=ItemType.FOLDER,
+                            title=link.title or "Untitled",
+                            raw_link=link,
+                            identifier=link.href
+                        ))
+                
+                if group_items:
+                    gm = group.metadata
+                    
+                    # Determine next link for paging
+                    g_next = FeedReconciler._find_next(group.links, base_url)
+                    
+                    # total_items logic:
+                    # If we have a next link, we trust the server's numberOfItems.
+                    # If we don't have a next link, this is a fixed preview (likely in a dashboard).
+                    # In that case, total_items for this specific view section is just what we have.
+                    if g_next:
+                        g_total = (gm.numberOfItems if gm else None) or len(group_items)
+                    else:
+                        g_total = len(group_items)
+                    
+                    # Look for self link in group links for "See All" navigation
+                    g_self = None
+                    if group.links:
+                        for l in group.links:
+                            rels = [l.rel] if isinstance(l.rel, str) else (l.rel or [])
+                            if "self" in rels:
+                                g_self = urllib.parse.urljoin(base_url, l.href)
+                                break
+                    
+                    sections.append(FeedSection(
+                        title=(gm.title if gm else None) or "Group",
+                        section_id=(gm.identifier if gm else None) or f"group_{(gm.title if gm else 'anon')}",
+                        items=group_items,
+                        total_items=g_total,
+                        items_per_page=gm.itemsPerPage if gm else None,
+                        current_page=(gm.currentPage if gm else None) or 1,
+                        next_url=g_next,
+                        self_url=g_self
+                    ))
+
+        # 3. Handle Top-level Publications
+        if feed.publications:
+            pub_items = []
+            for pub in feed.publications:
+                pub_items.append(FeedReconciler._pub_to_item(pub, base_url))
+            
+            if pub_items:
+                m = feed.metadata
+                sec_id = (m.identifier if m else None) or f"pubs_{logical_id}"
+                next_url = FeedReconciler._find_next(feed.links, base_url)
+                
+                if next_url:
+                    total = (m.numberOfItems if m else None) or len(pub_items)
+                else:
+                    total = len(pub_items)
+                
+                sections.append(FeedSection(
+                    title="Items",
+                    section_id=sec_id,
+                    items=pub_items,
+                    total_items=total,
+                    items_per_page=m.itemsPerPage if m else None,
+                    current_page=(m.currentPage if m else None) or 1,
+                    next_url=next_url
+                ))
+
+        # 4. Data Cleaning / Optimization
+        # Prune redundant server-side nesting (e.g. Codex grouping items that duplicate section titles)
+        for section in sections:
+            if len(section.items) > 1:
+                first = section.items[0]
+                # If the first item is a folder/header and matches the section title, it's redundant
+                if first.type in (ItemType.FOLDER, ItemType.FOLDER): # Using ItemType.FOLDER as proxy for grouping
+                    clean_first = re.sub(r'[^a-z0-9]', '', first.title.lower())
+                    clean_sec = re.sub(r'[^a-z0-9]', '', section.title.lower())
+                    if clean_first == clean_sec:
+                        logger.info(f"FeedReconciler: Pruned redundant grouping item '{first.title}' in section '{section.title}'")
+                        section.items.pop(0)
+                        if section.total_items: section.total_items -= 1
+
+        # 4. Determine Global Page
+        m = feed.metadata
+        curr_page = (m.currentPage if m else None) or 1
+        # ... (rest of page detection logic) ...
+
+        # 5. Determine Total Pages
+        total_pages = None
+        if m and m.numberOfItems and m.itemsPerPage:
+            import math
+            total_pages = math.ceil(m.numberOfItems / m.itemsPerPage)
+
+        # 6. Detect Pagination Template
+        pagination_template = None
+        is_offset_based = False
+        
+        next_link = FeedReconciler._find_next(feed.links, base_url)
+        if next_link:
+            match = re.search(r'/(?P<prefix>[a-z])/(?P<group>\d+)/(?P<page>\d+)', next_link)
+            if match:
+                pre, grp, p_val = match.groups()
+                pagination_template = next_link.replace(f"/{pre}/{grp}/{p_val}", f"/{pre}/{grp}/{{page}}")
+            else:
+                match = re.search(r'(?P<key>page|offset|start)=(?P<val>\d+)', next_link)
+                if match:
+                    key, val = match.groups()
+                    is_offset_based = (key == 'offset' or key == 'start')
+                    pagination_template = next_link.replace(f"{key}={val}", f"{key}={{page}}")
+
+        # 7. Detect Search Template
+        search_template = None
+        if feed.links:
+            for link in feed.links:
+                rel = link.rel
+                rels = [rel] if isinstance(rel, str) else (rel or [])
+                if "search" in rels:
+                    # Resolve to absolute URL
+                    search_template = urllib.parse.urljoin(base_url, link.href)
+                    break
+
+        # 8. Final Layout Assignment and Main Section Detection
+        temp_page = FeedPage(
+            title=page_title,
+            current_page=curr_page,
+            total_pages=total_pages,
+            sections=sections,
+            facets=facets,
+            is_dashboard=is_dashboard,
+            pagination_template=pagination_template,
+            search_template=search_template,
+            is_offset_based=is_offset_based
+        )
+        
+        # Determine logical main section
+        main_sec = temp_page.main_section
+        if main_sec:
+            temp_page.main_section_id = main_sec.section_id
+            main_sec.is_main = True
+
+        is_dash_context = is_dashboard or len(sections) > 1
+        
+        for section in sections:
+            # A section should be a GRID if:
+            # - It's paginated (has a next link)
+            # - It's explicitly marked as the Main section
+            # - It's NOT a dashboard/multi-section view
+            if not is_dash_context or section.next_url or section.is_main:
+                section.layout = SectionLayout.GRID
+            else:
+                section.layout = SectionLayout.RIBBON
+
+        # 9. Server-provided Breadcrumbs
+        breadcrumbs = []
+        if feed.links:
+            for link in feed.links:
+                rel = link.rel
+                rels = [rel] if isinstance(rel, str) else (rel or [])
+                # "up" or "via" links indicate hierarchy in OPDS
+                if "up" in rels or "via" in rels:
+                    breadcrumbs.append({
+                        "title": link.title or "Up",
+                        "url": urllib.parse.urljoin(base_url, link.href)
+                    })
+        temp_page.breadcrumbs = breadcrumbs
+
+        return temp_page
+
+    @staticmethod
+    def _pub_to_item(pub: Publication, base_url: str) -> FeedItem:
+        cover_url = None
+        if pub.images:
+            cover_url = urllib.parse.urljoin(base_url, pub.images[0].href)
+        
+        download_url = FeedReconciler._find_acquisition_link(pub, base_url)
+        
+        # Metadata extraction for Subtitle (Volume/Issue), Series, Imprint and Year
+        subtitle = None
+        series_name = None
+        imprint = None
+        year = None
+        m = pub.metadata
+        
+        if m:
+            # 1. Imprint Extraction
+            raw_imprint = getattr(m, "imprint", None)
+            if raw_imprint:
+                if isinstance(raw_imprint, dict):
+                    imprint = raw_imprint.get("name")
+                else:
+                    imprint = str(raw_imprint)
+
+            # 2. Series/Position Extraction
+            parts = []
+            belongs_to = getattr(m, "belongsTo", None)
+            if belongs_to and isinstance(belongs_to, dict):
+                # Komga/OPDS 2.0 Series info
+                series_list = belongs_to.get("series")
+                if series_list and isinstance(series_list, list):
+                    for s in series_list:
+                        if isinstance(s, dict):
+                            # Capture the series name
+                            if not series_name:
+                                series_name = s.get("name")
+                            
+                            # Capture position
+                            pos = s.get("position")
+                            if pos is not None:
+                                # Standardize position as #N
+                                pos_str = str(pos)
+                                if pos_str.endswith(".0"): pos_str = pos_str[:-2]
+                                parts.append(f"#{pos_str}")
+                
+                # Readium/Collection info (fallback if series name missing)
+                collection = belongs_to.get("collection")
+                if collection and isinstance(collection, dict):
+                    coll_name = collection.get("name")
+                    if coll_name:
+                        if not series_name:
+                            series_name = coll_name
+                        if not parts:
+                            pos = collection.get("position")
+                            if pos: parts.append(f"#{pos}")
+            
+            # Fallback to direct fields if available
+            if not parts and hasattr(m, "numberOfPages") and m.numberOfPages:
+                parts.append(f"{m.numberOfPages}p")
+                
+            if parts:
+                subtitle = " ".join(parts)
+            
+            if hasattr(m, "published") and m.published:
+                try:
+                    # published is often a string/date
+                    year = str(m.published)[:4]
+                except:
+                    pass
+
+        # Heuristic for ItemType
+        item_type = ItemType.BOOK
+        if not download_url:
+            has_nav = False
+            for l in (pub.links or []):
+                rels = [l.rel] if isinstance(l.rel, str) else (l.rel or [])
+                if any(r in ["subsection", "collection", "alternate"] for r in rels):
+                    if "opds+json" in (l.type or ""):
+                        has_nav = True
+                        break
+            if has_nav:
+                item_type = ItemType.FOLDER
+            
+        return FeedItem(
+            type=item_type,
+            title=m.title if m else "Unknown",
+            subtitle=subtitle,
+            series=series_name,
+            imprint=imprint,
+            year=year,
+            cover_url=cover_url,
+            download_url=download_url,
+            raw_pub=pub,
+            identifier=pub.identifier
+        )
+
+    @staticmethod
+    def _find_acquisition_link(pub: Publication, base_url: str = "") -> Optional[str]:
+        """Helper to find the best acquisition link in a publication."""
+        candidates = []
+        
+        # 1. Check standard links
+        for l in (pub.links or []):
+            rels = l.rel
+            if isinstance(rels, str): rel_list = [rels.lower()]
+            elif isinstance(rels, list): rel_list = [str(r).lower() for r in rels]
+            else: rel_list = []
+                
+            is_acq = any("acquisition" in r for r in rel_list)
+            l_type = (l.type or "").lower()
+            l_href = (l.href or "").lower()
+            
+            # Prioritized types
+            priority = 0
+            if "cbz" in l_type or l_href.endswith(".cbz"): priority = 100
+            elif "cbr" in l_type or l_href.endswith(".cbr"): priority = 90
+            elif "cb7" in l_type or l_href.endswith(".cb7"): priority = 80
+            elif "epub" in l_type or l_href.endswith(".epub"): priority = 70
+            elif "pdf" in l_type or l_href.endswith(".pdf"): priority = 50
+            elif "octet-stream" in l_type: priority = 10
+            
+            if is_acq or priority > 0:
+                if any(r in rel_list for r in ["self", "search", "alternate"]) and not is_acq:
+                    continue
+                candidates.append((priority, urllib.parse.urljoin(base_url, l.href)))
+
+        # 2. Check 'actions' (OPDS 2.0 extension used by commercial catalogs)
+        # We only care about free or direct acquisition actions for a reader.
+        if hasattr(pub, "actions") and pub.actions:
+            for action in pub.actions:
+                rel = (action.rel or "").lower()
+                if "acquisition" in rel:
+                    # Look for indirectAcquisition properties
+                    # properties is a dict in our Link model
+                    props = action.properties or {}
+                    ia_list = props.get("indirectAcquisition")
+                    if ia_list and isinstance(ia_list, list):
+                        # Find the best type in the chain
+                        for ia in ia_list:
+                            # indirectAcquisition items are raw dicts from the spec
+                            ia_type = str(ia.get("type", "")).lower()
+                            priority = 0
+                            if "epub" in ia_type: priority = 65
+                            elif "pdf" in ia_type: priority = 45
+                            
+                            # Check children recursively for deeper nesting (LCP, etc)
+                            children = ia.get("child")
+                            if children and isinstance(children, list):
+                                for child in children:
+                                    c_type = str(child.get("type", "")).lower()
+                                    if "epub" in c_type: priority = max(priority, 60)
+                            
+                            if priority > 0:
+                                candidates.append((priority, urllib.parse.urljoin(base_url, action.href)))
+        
+        if not candidates:
+            return None
+            
+        # Return the one with highest priority
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
+
+    @staticmethod
+    def _find_next(links: List[Link], base_url: str) -> Optional[str]:
+        if not links: return None
+        for l in links:
+            rel = l.rel if isinstance(l.rel, list) else [l.rel]
+            if "next" in rel:
+                return urllib.parse.urljoin(base_url, l.href)
+        return None

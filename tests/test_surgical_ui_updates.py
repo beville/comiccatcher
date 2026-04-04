@@ -7,12 +7,12 @@ from PyQt6.QtWidgets import QApplication, QListView
 from PyQt6.QtCore import QTimer
 
 # Ensure we can import from the project root
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 sys.path.append(os.path.join(os.getcwd(), "comiccatcher"))
 
-from ui.views.feed_browser import FeedBrowser
-from models.feed_page import FeedPage, FeedSection, FeedItem, ItemType, SectionLayout
-from models.opds import OPDSFeed, Metadata
+from comiccatcher.ui.views.feed_browser import FeedBrowser
+from comiccatcher.models.feed_page import FeedPage, FeedSection, FeedItem, ItemType, SectionLayout
+from comiccatcher.models.opds import OPDSFeed, Metadata
 
 # Create a QApplication instance for testing PyQt widgets
 app = QApplication.instance() or QApplication(sys.argv)

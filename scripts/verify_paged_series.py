@@ -10,9 +10,9 @@ from qasync import QEventLoop
 current_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(current_dir))
 
-from config import ConfigManager
-import logger
-from ui.theme_manager import UIConstants
+from comiccatcher.config import ConfigManager
+import comiccatcher.logger as logger
+from comiccatcher.ui.theme_manager import UIConstants
 
 async def verify_paged_series():
     print("🧪 Verifying Codex -> Series layout...")
@@ -24,10 +24,10 @@ async def verify_paged_series():
         print("❌ Error: Codex feed not found.")
         return
 
-    from api.client import APIClient
-    from api.opds_v2 import OPDS2Client
-    from api.image_manager import ImageManager
-    from ui.views.feed_browser import FeedBrowser
+    from comiccatcher.api.client import APIClient
+    from comiccatcher.api.opds_v2 import OPDS2Client
+    from comiccatcher.api.image_manager import ImageManager
+    from comiccatcher.ui.views.feed_browser import FeedBrowser
 
     UIConstants.init_scale()
     
@@ -72,7 +72,7 @@ async def verify_paged_series():
             for link in links:
                 print(f"  - [FACET] {link.title}")
                 if "series" in link.title.lower():
-                    from models.feed_page import FeedItem, ItemType
+                    from comiccatcher.models.feed_page import FeedItem, ItemType
                     series_item = FeedItem(type=ItemType.FOLDER, title=link.title, raw_link=link, identifier=link.href)
                     break
             if series_item: break

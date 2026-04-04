@@ -10,12 +10,12 @@ from qasync import QEventLoop
 current_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(current_dir))
 
-from config import ConfigManager
-from ui.app_layout import MainWindow
-from ui.theme_manager import UIConstants, ThemeManager
-from ui.components.collapsible_section import CollapsibleSection
-from ui.components.section_header import SectionHeader
-import logger
+from comiccatcher.config import ConfigManager
+from comiccatcher.ui.app_layout import MainWindow
+from comiccatcher.ui.theme_manager import UIConstants, ThemeManager
+from comiccatcher.ui.components.collapsible_section import CollapsibleSection
+from comiccatcher.ui.components.section_header import SectionHeader
+import comiccatcher.logger as logger
 
 async def wait_for_widgets(parent, widget_class, timeout=30):
     """Polls the widget tree until at least one widget of widget_class is found."""

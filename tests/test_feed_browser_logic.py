@@ -6,11 +6,11 @@ from unittest.mock import MagicMock
 from PyQt6.QtWidgets import QApplication
 
 # Ensure we can import from the project root
-sys.path.append(os.getcwd())
+sys.path.append(os.path.join(os.getcwd(), 'src'))
 sys.path.append(os.path.join(os.getcwd(), "comiccatcher"))
 
-from ui.views.feed_browser import FeedBrowser
-from models.opds import OPDSFeed, Metadata, Link
+from comiccatcher.ui.views.feed_browser import FeedBrowser
+from comiccatcher.models.opds import OPDSFeed, Metadata, Link
 
 app = QApplication(sys.argv)
 
