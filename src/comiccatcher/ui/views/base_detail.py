@@ -102,6 +102,29 @@ class BaseDetailView(QWidget):
         self._action_buttons.append(btn)
         return btn
 
+    def add_content_widget(self, widget: QWidget):
+        """Standardized helper to add a widget to the main content layout (before the spacer)."""
+        self.content_layout.insertWidget(self.content_layout.count() - 1, widget)
+
+    def update_header_margins(self):
+        """Standardized helper to update child header margins for scrollbar awareness."""
+        sb = self.scroll.verticalScrollBar()
+        sb_width = sb.width() if sb.isVisible() else 0
+        header_margin = sb_width + UIConstants.scale(10)
+        
+        from comiccatcher.ui.components.section_header import SectionHeader
+        from comiccatcher.ui.components.collapsible_section import CollapsibleSection
+        
+        # Check standard layout items (carousels in FeedDetail often use layouts directly)
+        # but also check for any widget children.
+        for hdr in self.findChildren(SectionHeader):
+            hdr.set_right_margin(header_margin)
+        for section in self.findChildren(CollapsibleSection):
+            section.set_right_margin(header_margin)
+            
+        # Specific check for FeedDetailView's manual carousel layouts if they contain headers
+        # will be handled by the specialized override if needed.
+
     def reapply_theme(self):
         theme = ThemeManager.get_current_theme_colors()
         s = UIConstants.scale

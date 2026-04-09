@@ -19,6 +19,7 @@ class FeedItem(BaseModel):
     year: Optional[str] = None
     cover_url: Optional[str] = None
     download_url: Optional[str] = None
+    download_format: Optional[str] = None
     
     # Original data for actions
     raw_pub: Optional[Publication] = None
@@ -50,6 +51,9 @@ class FeedSection(BaseModel):
     # Unique ID to reconcile across paginated responses
     section_id: str
     is_main: bool = False
+    
+    # Debug info: what OPDS element produced this?
+    source_element: Optional[str] = None
 
 class FeedPage(BaseModel):
     """The entire state of a feed view."""

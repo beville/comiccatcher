@@ -1,9 +1,9 @@
 from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict, field_validator
 
 class Link(BaseModel):
     model_config = ConfigDict(extra='allow')
-    href: str
+    href: Optional[str] = None
     type: Optional[str] = None
     rel: Optional[Union[str, List[str]]] = None
     title: Optional[str] = None
@@ -15,33 +15,116 @@ class Contributor(BaseModel):
     name: str
     sortAs: Optional[str] = None
     role: Optional[str] = None
+    links: Optional[List[Link]] = None
+
+class Collection(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    name: str
+    sortAs: Optional[str] = None
+    identifier: Optional[str] = None
+    position: Optional[Union[float, str]] = None
+    numberOfItems: Optional[int] = None
+    links: Optional[List[Link]] = None
+
+class BelongsTo(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    series: Optional[List[Collection]] = None
+    collection: Optional[List[Collection]] = None
+
+class Presentation(BaseModel):
+    model_config = ConfigDict(extra='allow')
+    layout: Optional[str] = None # fixed, reflowable
+    orientation: Optional[str] = None # landscape, portrait, auto
+    spread: Optional[str] = None # auto, landscape, both, none
+    clipped: Optional[bool] = None
+    fit: Optional[str] = None # contain, cover, width, height
 
 class Metadata(BaseModel):
     model_config = ConfigDict(extra='allow')
     title: Optional[str] = None
     subtitle: Optional[str] = None
     identifier: Optional[str] = None
-    author: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    translator: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    editor: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    artist: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    illustrator: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    letterer: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    penciler: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    colorist: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    inker: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
-    contributor: Optional[Union[str, List[Union[str, Contributor]], Contributor]] = None
+    
+    # Contributor roles standardized to List[Contributor] via validator
+    author: Optional[List[Contributor]] = None
+    translator: Optional[List[Contributor]] = None
+    editor: Optional[List[Contributor]] = None
+    artist: Optional[List[Contributor]] = None
+    illustrator: Optional[List[Contributor]] = None
+    letterer: Optional[List[Contributor]] = None
+    penciler: Optional[List[Contributor]] = None
+    colorist: Optional[List[Contributor]] = None
+    inker: Optional[List[Contributor]] = None
+    contributor: Optional[List[Contributor]] = None
+    publisher: Optional[List[Contributor]] = None
+    imprint: Optional[List[Contributor]] = None
+    
     description: Optional[str] = None
-    publisher: Optional[Union[str, Contributor, List[Union[str, Contributor]]]] = None
     published: Optional[str] = None
     subject: Optional[Union[str, List[Union[str, Dict[str, Any]]]]] = None
     language: Optional[Union[str, List[str]]] = None
     modified: Optional[str] = None
     conformsTo: Optional[Union[str, List[str]]] = None
-    belongsTo: Optional[Dict[str, Any]] = None
+    numberOfBytes: Optional[int] = None
+    
+    belongsTo: Optional[BelongsTo] = None
+    presentation: Optional[Presentation] = None
+    
     numberOfItems: Optional[int] = None
     itemsPerPage: Optional[int] = None
     currentPage: Optional[int] = None
+    numberOfPages: Optional[int] = None
+
+    @field_validator("author", "translator", "editor", "artist", "illustrator", "letterer", 
+                     "penciler", "colorist", "inker", "contributor", "publisher", "imprint", 
+                     mode='before')
+    @classmethod
+    def standardize_contributors(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            v = [v]
+        
+        result = []
+        for item in v:
+            if isinstance(item, str):
+                result.append(Contributor(name=item))
+            elif isinstance(item, dict):
+                if "name" in item:
+                    result.append(Contributor(**item))
+                else:
+                    # Fallback for dicts missing 'name'
+                    result.append(Contributor(name=str(item.get("title") or item.get("label") or item)))
+            elif isinstance(item, Contributor):
+                result.append(item)
+            else:
+                result.append(Contributor(name=str(item)))
+        return result
+
+    @field_validator("belongsTo", mode='before')
+    @classmethod
+    def standardize_belongs_to(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, dict):
+            return None
+            
+        # Ensure 'series' and 'collection' inside belongsTo are lists of objects
+        new_v = v.copy()
+        for key in ["series", "collection"]:
+            val = v.get(key)
+            if val:
+                if not isinstance(val, list):
+                    val = [val]
+                
+                standard_list = []
+                for item in val:
+                    if isinstance(item, str):
+                        standard_list.append({"name": item})
+                    else:
+                        standard_list.append(item)
+                new_v[key] = standard_list
+        return new_v
 
 class Publication(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -51,14 +134,35 @@ class Publication(BaseModel):
     readingOrder: Optional[List[Link]] = None
     resources: Optional[List[Link]] = None
     actions: Optional[List[Link]] = None
-    belongsTo: Optional[Dict[str, Any]] = None
+    belongsTo: Optional[BelongsTo] = None
+
+    @property
+    def is_divina(self) -> bool:
+        """Determines if this is an image-based comic/manga manifest."""
+        # 1. Check conformsTo for Divina profile
+        if self.metadata and self.metadata.conformsTo:
+            conforms = self.metadata.conformsTo
+            if isinstance(conforms, str):
+                if "divina" in conforms: return True
+            elif isinstance(conforms, list):
+                if any("divina" in str(c) for r in conforms for c in ([r] if not isinstance(r, list) else r)): 
+                    # Note: pydantic Union/List nesting can be complex, keeping it simple
+                    if any("divina" in str(c) for c in conforms): return True
+
+        # 2. Heuristic: Check if readingOrder contains images
+        if self.readingOrder and len(self.readingOrder) > 0:
+            first_type = (self.readingOrder[0].type or "").lower()
+            if "image/" in first_type:
+                return True
+                
+        return False
 
     @property
     def identifier(self) -> str:
-        # Some servers put id at top level, some in metadata.identifier
-        # We also support accessing via .id if pydantic allowed it from extra
-        if hasattr(self, 'id') and self.id:
-            return str(self.id)
+        # Check top-level id first, then metadata.identifier
+        raw_id = getattr(self, 'id', None)
+        if raw_id:
+            return str(raw_id)
         if self.metadata and self.metadata.identifier:
             return str(self.metadata.identifier)
         return ""

@@ -50,13 +50,14 @@ class FeedReaderView(BaseReaderView):
         if not self._current_pub: return
         
         m = self._current_pub.metadata
+        if not m: return
         
         # Build credits
         creds = []
-        for role in ["author", "penciler", "writer", "artist"]:
+        for role in ["author", "penciler", "artist", "editor", "colorist", "letterer", "inker"]:
             val = getattr(m, role, None)
-            if val:
-                names = [v.name if hasattr(v, 'name') else str(v) for v in (val if isinstance(val, list) else [val])]
+            if val: # Now always a List[Contributor] if present
+                names = [v.name for v in val]
                 creds.append(f"{role.capitalize()}: {', '.join(names)}")
         
         # Published date (Month Year)
@@ -97,16 +98,13 @@ class FeedReaderView(BaseReaderView):
 
         # Imprint string handling
         imprint_name = ""
-        raw_imprint = getattr(m, "imprint", None)
-        if raw_imprint:
-            if isinstance(raw_imprint, list):
-                imprint_name = ", ".join([p.name if hasattr(p, 'name') else str(p) for p in raw_imprint])
-            elif hasattr(raw_imprint, 'name'):
-                imprint_name = raw_imprint.name
-            elif isinstance(raw_imprint, dict):
-                imprint_name = raw_imprint.get("name", "")
-            else:
-                imprint_name = str(raw_imprint)
+        if m.imprint:
+            imprint_name = ", ".join([p.name for p in m.imprint])
+
+        # Publisher string handling
+        pub_name = ""
+        if m.publisher:
+            pub_name = ", ".join([p.name for p in m.publisher])
 
         data = {
             "credits": "\n".join(creds),

@@ -54,10 +54,26 @@ class BaseFeedSubView(QWidget):
         # Use the centralized metric from UIConstants
         scrollbar_h = UIConstants.SCROLLBAR_SIZE
         card_h = UIConstants.get_card_height(self._show_labels)
-        
+
         return card_h + scrollbar_h + UIConstants.GRID_SPACING
 
+    def update_header_margins(self, scroll_bar):
+        """Standardized helper to update header margins for scrollbar awareness."""
+        if not scroll_bar: return
+
+        sb_width = scroll_bar.width() if scroll_bar.isVisible() else 0
+        header_margin = sb_width + UIConstants.scale(10)
+
+        from comiccatcher.ui.components.section_header import SectionHeader
+        from comiccatcher.ui.components.collapsible_section import CollapsibleSection
+
+        for hdr in self.findChildren(SectionHeader):
+            hdr.set_right_margin(header_margin)
+        for section in self.findChildren(CollapsibleSection):
+            section.set_right_margin(header_margin)
+
     def gather_context_pubs(self, model: FeedBrowserModel) -> List[object]:
+
         """Collects raw publication objects from a model to provide reading context."""
         context_pubs = []
         # Support both sparse items (dict) and logical items (list)

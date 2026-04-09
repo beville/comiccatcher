@@ -3,7 +3,7 @@ import urllib.parse
 import re
 import time
 from pathlib import Path
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
     QPushButton, QMenu, QStackedWidget

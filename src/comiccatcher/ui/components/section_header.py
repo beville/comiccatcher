@@ -65,6 +65,11 @@ class SectionHeader(QWidget):
 
         self._update_ui_state()
 
+    def set_right_margin(self, margin: int):
+        """Adjusts the right margin, typically to account for a vertical scrollbar."""
+        m = self.layout.contentsMargins()
+        self.layout.setContentsMargins(m.left(), m.top(), margin, m.bottom())
+
     def reapply_theme(self):
         theme = ThemeManager.get_current_theme_colors()
         self.header_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold; color: {theme['text_main']};")

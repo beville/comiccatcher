@@ -2,7 +2,7 @@ import asyncio
 import traceback
 import uuid
 from pathlib import Path
-from typing import List, Union, Any, Optional, Set
+from typing import List, Union, Any, Optional, Set, Tuple
 from urllib.parse import urljoin
 
 from PyQt6.QtWidgets import (
@@ -146,9 +146,11 @@ class FeedDetailView(BaseDetailView):
             if label.objectName() == "carousel_header":
                 label.setStyleSheet(f"font-size: {s(18)}px; font-weight: bold; margin-top: {s(20)}px; color: {theme['text_main']};")
             elif label.objectName() == "meta_label":
-
                 label.setStyleSheet(f"font-weight: bold; font-size: {UIConstants.FONT_SIZE_DETAIL_INFO}px; margin-bottom: {UIConstants.scale(2)}px; color: {theme['text_dim']};")
+            elif label.objectName() == "meta_status_hint":
+                label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_BADGE}px; color: {theme['text_dim']}; font-style: italic; margin-top: {UIConstants.scale(5)}px;")
             else:
+
                 # Default for other dynamic labels like the credit values
                 if label.text() and not label.objectName():
                      label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_DETAIL_INFO}px; color: {theme['text_main']};")
@@ -192,8 +194,8 @@ class FeedDetailView(BaseDetailView):
 
     async def _fetch_full_metadata(self, pub: Publication, base_url: str, load_id: str, force_refresh: bool = False):
         manifest_url = None
-        for link in pub.links:
-            if link.type in ["application/webpub+json", "application/divina+json"]:
+        for link in (pub.links or []):
+            if link.type in ["application/webpub+json", "application/divina+json", "application/opds-publication+json"]:
                 manifest_url = link.href
                 break
         
@@ -208,6 +210,8 @@ class FeedDetailView(BaseDetailView):
                     if full_pub.metadata and pub.metadata:
                         if not full_pub.metadata.description and pub.metadata.description: 
                             full_pub.metadata.description = pub.metadata.description
+                        if not full_pub.metadata.numberOfBytes and pub.metadata.numberOfBytes:
+                            full_pub.metadata.numberOfBytes = pub.metadata.numberOfBytes
                     elif not full_pub.metadata and pub.metadata:
                         full_pub.metadata = pub.metadata
                     fetched_pub = full_pub
@@ -351,32 +355,74 @@ class FeedDetailView(BaseDetailView):
             
             self._add_title(m.title, m.subtitle)
 
+            # Series and Position line
+            if m.belongsTo:
+                # Prioritize series, then collection
+                coll = None
+                if m.belongsTo.series and len(m.belongsTo.series) > 0:
+                    coll = m.belongsTo.series[0]
+                elif m.belongsTo.collection and len(m.belongsTo.collection) > 0:
+                    coll = m.belongsTo.collection[0]
+                
+                if coll:
+                    name_html = f"<i>{coll.name}</i>"
+                    pos_str = ""
+                    if coll.position is not None:
+                        p = str(coll.position)
+                        if p.endswith(".0"): p = p[:-2]
+                        pos_str = f" #{p}"
+                    
+                    series_label = QLabel(f"{name_html}{pos_str}")
+                    series_label.setTextFormat(Qt.TextFormat.RichText)
+                    theme = ThemeManager.get_current_theme_colors()
+                    series_label.setStyleSheet(f"font-size: 16px; color: {theme['text_main']}; margin-top: 2px;")
+                    self.info_layout.addWidget(series_label)
+
             # Publisher and Pub Date line
-            pub_val = m.publisher
-            pub_name = None
-            if isinstance(pub_val, list) and len(pub_val) > 0:
-                p = pub_val[0]
-                pub_name = p.name if hasattr(p, 'name') else (p.get("name") if isinstance(p, dict) else str(p))
-            elif pub_val:
-                pub_name = pub_val.name if hasattr(pub_val, 'name') else (pub_val.get("name") if isinstance(pub_val, dict) else str(pub_val))
+            pub_contributor = None
+            if m.publisher and len(m.publisher) > 0:
+                pub_contributor = m.publisher[0]
             
             month, year = parse_opds_date(m.published)
             display_date = format_publication_date(month, year)
 
-            pub_parts = []
-            if pub_name: pub_parts.append(pub_name)
-            if display_date: pub_parts.append(display_date)
-            
-            if pub_parts:
-                line_text = " • ".join(pub_parts)
-                pub_label = QLabel(line_text)
+            if pub_contributor or display_date:
+                line_layout = QHBoxLayout()
+                line_layout.setContentsMargins(0, 0, 0, 0)
+                line_layout.setSpacing(5)
+                line_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
                 theme = ThemeManager.get_current_theme_colors()
-                pub_label.setStyleSheet(f"font-size: 14px; color: {theme['text_dim']}; margin-top: 2px;")
-                self.info_layout.addWidget(pub_label)
+                
+                if pub_contributor:
+                    # Link logic
+                    on_click = None
+                    if pub_contributor.links and len(pub_contributor.links) > 0:
+                        href = pub_contributor.links[0].href
+                        if href:
+                            full_url = urljoin(base_url, href)
+                            on_click = lambda u=full_url, t=pub_contributor.name: self.on_navigate(u, t)
+                    
+                    # Pill-style Publisher
+                    badge = Badge(pub_contributor.name, on_click=on_click)
+                    line_layout.addWidget(badge)
+                    
+                    if display_date:
+                        sep = QLabel(" • ")
+                        sep.setStyleSheet(f"font-size: 14px; color: {theme['text_dim']};")
+                        line_layout.addWidget(sep)
+
+                if display_date:
+                    date_label = QLabel(display_date)
+                    date_label.setStyleSheet(f"font-size: 14px; color: {theme['text_dim']};")
+                    line_layout.addWidget(date_label)
+
+                self.info_layout.addLayout(line_layout)
 
             # Action Buttons
-            manifest_url = next((urljoin(base_url, l.href) for l in pub.links if l.type in ["application/webpub+json", "application/divina+json"]), None)
-            download_url = next((urljoin(base_url, l.href) for l in pub.links if l.rel == "http://opds-spec.org/acquisition" or (l.type and "cbz" in l.type)), None)
+            manifest_url = next((urljoin(base_url, l.href) for l in (pub.links or []) if l.type in ["application/webpub+json", "application/divina+json", "application/opds-publication+json"]), None)
+            
+            # Use FeedReconciler to find best download link and its format
+            download_url, download_format = FeedReconciler._find_acquisition_link(pub, base_url)
             
             self.btn_read = self.create_action_button(
                 "Read Now",
@@ -384,12 +430,14 @@ class FeedDetailView(BaseDetailView):
                 icon_name="book"
             )
             
-            # Disable Read button if no reading order, no webpub manifest, and no streamable download
-            has_reading_order = pub.readingOrder and len(pub.readingOrder) > 0
-            self.btn_read.setEnabled(has_reading_order or manifest_url is not None or download_url is not None)
+            # Disable Read button if not Divina (image-based).
+            # We also enable if the manifest link type is explicitly application/divina+json.
+            is_divina_link = any(l.type == "application/divina+json" for l in (pub.links or []))
+            self.btn_read.setEnabled(pub.is_divina or is_divina_link)
             
+            down_label = f"Download ({download_format})" if download_format else "Download"
             btn_down = self.create_action_button(
-                "Download",
+                down_label,
                 lambda: self.on_start_download(pub, download_url),
                 icon_name="download"
             )
@@ -404,6 +452,24 @@ class FeedDetailView(BaseDetailView):
 
             self.actions_layout.addWidget(self.btn_read)
             self.actions_layout.addWidget(btn_down)
+
+            # Support Status Labels
+            theme = ThemeManager.get_current_theme_colors()
+            
+            # 1. Streaming Support Hint
+            if not (pub.is_divina or is_divina_link):
+                streaming_hint = QLabel("Note: This server does not support page streaming for this item.")
+                streaming_hint.setObjectName("meta_status_hint")
+                streaming_hint.setWordWrap(True)
+                self.info_layout.addWidget(streaming_hint)
+
+            # 2. Purchase Support Hint
+            has_buy = any((action.rel or "").lower() == "http://opds-spec.org/acquisition/buy" for action in (pub.actions or []))
+            if has_buy and not download_url:
+                buy_hint = QLabel("Note: This item requires purchase, which is not supported in this app.")
+                buy_hint.setObjectName("meta_status_hint")
+                buy_hint.setWordWrap(True)
+                self.info_layout.addWidget(buy_hint)
             
             # Check if already downloaded (if link exists)
             self._file_size_str = None
@@ -413,14 +479,24 @@ class FeedDetailView(BaseDetailView):
             # Progression & Page Count
             self._add_progression_label()
             
-            total_pages = 0
-            if hasattr(m, 'numberOfPages') and m.numberOfPages:
-                total_pages = m.numberOfPages
-            elif pub.readingOrder:
-                total_pages = len(pub.readingOrder)
+            total_pages = m.numberOfPages or (len(pub.readingOrder) if pub.readingOrder else 0)
+            
+            # Format remote file size if available
+            self._file_size_str = None
+            if m.numberOfBytes:
+                self._file_size_str = format_file_size(m.numberOfBytes)
                 
+            prog_parts = []
             if total_pages:
-                self.progression_label.setText(f"Pages: {total_pages}")
+                prog_parts.append(f"Pages: {total_pages}")
+            
+            if self._file_size_str:
+                theme = ThemeManager.get_current_theme_colors()
+                dim_color = theme['text_dim']
+                prog_parts.append(f"<span style='color: {dim_color};'>{self._file_size_str}</span>")
+
+            if prog_parts:
+                self.progression_label.setText(" • ".join(prog_parts))
 
             # Summary (Description)
             if m.description:
@@ -437,18 +513,14 @@ class FeedDetailView(BaseDetailView):
             role_map = {
                 "author": "Author", "artist": "Artist", "penciler": "Penciller", 
                 "inker": "Inker", "colorist": "Colorist", "letterer": "Letterer", 
-                "editor": "Editor"
+                "editor": "Editor", "publisher": "Publisher", "imprint": "Imprint"
             }
             for attr, label in role_map.items():
                 val = getattr(m, attr, None)
-                if val:
-                    # Collect for artist grouping
-                    roles_orig[label] = val if isinstance(val, list) else [val]
-                    if isinstance(val, list):
-                        names = [ (v.name if hasattr(v, 'name') else str(v)) for v in val ]
-                        roles[label] = ", ".join(names)
-                    else:
-                        roles[label] = val.name if hasattr(val, 'name') else str(val)
+                if val: # Always a List[Contributor]
+                    roles_orig[label] = val
+                    names = [v.name for v in val]
+                    roles[label] = ", ".join(names)
             
             final_creds = format_artist_credits(roles)
             for cred in final_creds:
@@ -470,6 +542,9 @@ class FeedDetailView(BaseDetailView):
 
             # carousels
             self._add_carousels(pub, base_url)
+            
+            # Initial margin adjustment
+            self.update_header_margins()
         finally:
             self.setUpdatesEnabled(True)
 
@@ -503,14 +578,13 @@ class FeedDetailView(BaseDetailView):
         flow_layout = FlowLayout(spacing=5)
         
         for item in items:
-            name = item.name if hasattr(item, 'name') else (item.get("name") if isinstance(item, dict) else str(item))
+            name = item.name
             href = None
-            links = item.get("links", []) if isinstance(item, dict) else (getattr(item, 'links', []) or [])
-            for l in links:
-                l_type = l.get("type", "") if isinstance(l, dict) else getattr(l, 'type', '') or ""
-                if "opds" in l_type:
-                    href = l.get("href") if isinstance(l, dict) else l.href
-                    break
+            if item.links:
+                for l in item.links:
+                    if "opds" in (l.type or ""):
+                        href = l.href
+                        break
             
             if href:
                 full_href = urljoin(base_url, href)
@@ -564,22 +638,45 @@ class FeedDetailView(BaseDetailView):
         container.setLayout(row_layout)
         layout.addWidget(container)
 
+    def update_header_margins(self):
+        """Extended helper to handle manual carousel layouts in FeedDetailView."""
+        # 1. Base logic for standard children
+        super().update_header_margins()
+
+        # 2. Specialized logic for manual carousel layouts
+        sb = self.scroll.verticalScrollBar()
+        sb_width = sb.width() if sb.isVisible() else 0
+        header_margin = sb_width + UIConstants.scale(10)
+
+        # Look for the QHBoxLayouts we created manually for carousels
+        for i in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(i)
+            if item and item.layout() and isinstance(item.layout(), QHBoxLayout):
+                l = item.layout()
+                has_header_label = False
+                for j in range(l.count()):
+                    w = l.itemAt(j).widget()
+                    if w and w.objectName() == "carousel_header":
+                        has_header_label = True
+                        break
+                if has_header_label:
+                    l.setContentsMargins(0, 0, header_margin, 0)
+
     def _add_carousels(self, pub: Publication, base_url: str):
-        belongs_to = pub.metadata.belongsTo or pub.belongsTo
+        belongs_to = pub.metadata.belongsTo if pub.metadata else pub.belongsTo
         if not belongs_to: return
-        
+
         for rel_type in ["series", "collection"]:
-            items = belongs_to.get(rel_type, [])
-            if not isinstance(items, list): items = [items]
+            items = getattr(belongs_to, rel_type, []) or []
             for item in items:
-                links = item.get("links", [])
-                for link in links:
-                    l_href = link.get("href") if isinstance(link, dict) else getattr(link, 'href', None)
+                if not item.links: continue
+                for link in item.links:
+                    l_href = link.href
                     if not l_href: continue
-                    
-                    label_text = item.get("name") or rel_type.capitalize()
+
+                    label_text = item.name or rel_type.capitalize()
                     if rel_type == "series": label_text = f"More from {label_text}"
-                    
+
                     header = QHBoxLayout()
                     l_title = QLabel(label_text)
                     l_title.setObjectName("carousel_header")
@@ -587,8 +684,12 @@ class FeedDetailView(BaseDetailView):
                     header.addStretch()
 
                     full_href = urljoin(base_url, l_href)
+                    label = "See All"
+                    if item.numberOfItems:
+                        label = f"See All ({item.numberOfItems})"
+                        
                     btn_all = self.create_action_button(
-                        "See All",
+                        label,
                         lambda _, u=full_href, t=label_text: self.on_navigate(u, t),
                         object_name="action_button"
                     )

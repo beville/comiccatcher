@@ -1,6 +1,6 @@
 import urllib.parse
 import re
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from comiccatcher.models.opds import OPDSFeed, Publication, Link, Group
 from comiccatcher.models.feed_page import FeedPage, FeedSection, FeedItem, ItemType, SectionLayout
 from comiccatcher.logger import get_logger
@@ -96,18 +96,19 @@ class FeedReconciler:
                 next_url = FeedReconciler._find_next(feed.links, base_url)
                 
                 sections.append(FeedSection(
-                    title="Subsections",
+                    title="Browse",
                     section_id=sec_id,
                     items=nav_items,
                     total_items=total,
                     items_per_page=len(nav_items),
                     current_page=1,
-                    next_url=None # Navigation doesn't page
+                    next_url=None, # Navigation doesn't page
+                    source_element="root:navigation"
                 ))
 
         # 2. Handle Groups
         if feed.groups:
-            for group in feed.groups:
+            for i, group in enumerate(feed.groups):
                 group_items = []
                 if group.publications:
                     for pub in group.publications:
@@ -133,13 +134,9 @@ class FeedReconciler:
                     g_next = FeedReconciler._find_next(group.links, base_url)
                     
                     # total_items logic:
-                    # If we have a next link, we trust the server's numberOfItems.
-                    # If we don't have a next link, this is a fixed preview (likely in a dashboard).
-                    # In that case, total_items for this specific view section is just what we have.
-                    if g_next:
-                        g_total = (gm.numberOfItems if gm else None) or len(group_items)
-                    else:
-                        g_total = len(group_items)
+                    # Use the server's numberOfItems for this group if provided.
+                    # Fallback to current item count if no total metadata exists.
+                    g_total = (gm.numberOfItems if gm else None) or len(group_items)
                     
                     # Look for self link in group links for "See All" navigation
                     g_self = None
@@ -150,6 +147,11 @@ class FeedReconciler:
                                 g_self = urllib.parse.urljoin(base_url, l.href)
                                 break
                     
+                    sources = []
+                    if group.publications: sources.append("publications")
+                    if group.navigation: sources.append("navigation")
+                    source_str = f"group[{i}]:{'+'.join(sources)}" if sources else f"group[{i}]"
+
                     sections.append(FeedSection(
                         title=(gm.title if gm else None) or "Group",
                         section_id=(gm.identifier if gm else None) or f"group_{(gm.title if gm else 'anon')}",
@@ -158,7 +160,8 @@ class FeedReconciler:
                         items_per_page=gm.itemsPerPage if gm else None,
                         current_page=(gm.currentPage if gm else None) or 1,
                         next_url=g_next,
-                        self_url=g_self
+                        self_url=g_self,
+                        source_element=source_str
                     ))
 
         # 3. Handle Top-level Publications
@@ -172,10 +175,9 @@ class FeedReconciler:
                 sec_id = (m.identifier if m else None) or f"pubs_{logical_id}"
                 next_url = FeedReconciler._find_next(feed.links, base_url)
                 
-                if next_url:
-                    total = (m.numberOfItems if m else None) or len(pub_items)
-                else:
-                    total = len(pub_items)
+                # total_items logic:
+                # Use the server's numberOfItems for the entire feed if provided.
+                total = (m.numberOfItems if m else None) or len(pub_items)
                 
                 sections.append(FeedSection(
                     title="Items",
@@ -184,7 +186,8 @@ class FeedReconciler:
                     total_items=total,
                     items_per_page=m.itemsPerPage if m else None,
                     current_page=(m.currentPage if m else None) or 1,
-                    next_url=next_url
+                    next_url=next_url,
+                    source_element="root:publications"
                 ))
 
         # 4. Data Cleaning / Optimization
@@ -292,10 +295,11 @@ class FeedReconciler:
         cover_url = None
         if pub.images:
             cover_url = urllib.parse.urljoin(base_url, pub.images[0].href)
-        
-        download_url = FeedReconciler._find_acquisition_link(pub, base_url)
-        
+
+        download_url, download_format = FeedReconciler._find_acquisition_link(pub, base_url)
+
         # Metadata extraction for Subtitle (Volume/Issue), Series, Imprint and Year
+
         subtitle = None
         series_name = None
         imprint = None
@@ -303,48 +307,38 @@ class FeedReconciler:
         m = pub.metadata
         
         if m:
-            # 1. Imprint Extraction
-            raw_imprint = getattr(m, "imprint", None)
-            if raw_imprint:
-                if isinstance(raw_imprint, dict):
-                    imprint = raw_imprint.get("name")
-                else:
-                    imprint = str(raw_imprint)
+            # 1. Imprint Extraction (m.imprint is now List[Contributor])
+            if m.imprint and len(m.imprint) > 0:
+                imprint = m.imprint[0].name
 
             # 2. Series/Position Extraction
             parts = []
-            belongs_to = getattr(m, "belongsTo", None)
-            if belongs_to and isinstance(belongs_to, dict):
+            if m.belongsTo:
                 # Komga/OPDS 2.0 Series info
-                series_list = belongs_to.get("series")
-                if series_list and isinstance(series_list, list):
-                    for s in series_list:
-                        if isinstance(s, dict):
-                            # Capture the series name
-                            if not series_name:
-                                series_name = s.get("name")
-                            
-                            # Capture position
-                            pos = s.get("position")
-                            if pos is not None:
-                                # Standardize position as #N
-                                pos_str = str(pos)
-                                if pos_str.endswith(".0"): pos_str = pos_str[:-2]
-                                parts.append(f"#{pos_str}")
+                if m.belongsTo.series:
+                    for s in m.belongsTo.series:
+                        # Capture the series name
+                        if not series_name:
+                            series_name = s.name
+                        
+                        # Capture position
+                        if s.position is not None:
+                            # Standardize position as #N
+                            pos_str = str(s.position)
+                            if pos_str.endswith(".0"): pos_str = pos_str[:-2]
+                            parts.append(f"#{pos_str}")
                 
                 # Readium/Collection info (fallback if series name missing)
-                collection = belongs_to.get("collection")
-                if collection and isinstance(collection, dict):
-                    coll_name = collection.get("name")
-                    if coll_name:
-                        if not series_name:
-                            series_name = coll_name
-                        if not parts:
-                            pos = collection.get("position")
-                            if pos: parts.append(f"#{pos}")
+                if m.belongsTo.collection:
+                    for coll in m.belongsTo.collection:
+                        if coll.name:
+                            if not series_name:
+                                series_name = coll.name
+                            if not parts and coll.position:
+                                parts.append(f"#{coll.position}")
             
             # Fallback to direct fields if available
-            if not parts and hasattr(m, "numberOfPages") and m.numberOfPages:
+            if not parts and m.numberOfPages:
                 parts.append(f"{m.numberOfPages}p")
                 
             if parts:
@@ -379,15 +373,27 @@ class FeedReconciler:
             year=year,
             cover_url=cover_url,
             download_url=download_url,
+            download_format=download_format,
             raw_pub=pub,
             identifier=pub.identifier
         )
 
     @staticmethod
-    def _find_acquisition_link(pub: Publication, base_url: str = "") -> Optional[str]:
-        """Helper to find the best acquisition link in a publication."""
+    def _find_acquisition_link(pub: Publication, base_url: str = "") -> Tuple[Optional[str], Optional[str]]:
+        """Helper to find the best acquisition link and its format."""
         candidates = []
         
+        def get_format_label(l_type: str, l_href: str) -> str:
+            l_type = l_type.lower()
+            l_href = l_href.lower()
+            if "cbz" in l_type or l_href.endswith(".cbz"): return "CBZ"
+            if "cbr" in l_type or l_href.endswith(".cbr"): return "CBR"
+            if "cb7" in l_type or l_href.endswith(".cb7"): return "CB7"
+            if "epub" in l_type or l_href.endswith(".epub"): return "EPUB"
+            if "pdf" in l_type or l_href.endswith(".pdf"): return "PDF"
+            if "octet-stream" in l_type: return "BIN"
+            return "FILE"
+
         # 1. Check standard links
         for l in (pub.links or []):
             rels = l.rel
@@ -411,28 +417,28 @@ class FeedReconciler:
             if is_acq or priority > 0:
                 if any(r in rel_list for r in ["self", "search", "alternate"]) and not is_acq:
                     continue
-                candidates.append((priority, urllib.parse.urljoin(base_url, l.href)))
+                
+                # If it is explicitly an acquisition link but we didn't recognize the type,
+                # give it a baseline priority.
+                if is_acq and priority == 0:
+                    priority = 1
+                    
+                candidates.append((priority, urllib.parse.urljoin(base_url, l.href), get_format_label(l_type, l_href)))
 
         # 2. Check 'actions' (OPDS 2.0 extension used by commercial catalogs)
-        # We only care about free or direct acquisition actions for a reader.
         if hasattr(pub, "actions") and pub.actions:
             for action in pub.actions:
                 rel = (action.rel or "").lower()
                 if "acquisition" in rel:
-                    # Look for indirectAcquisition properties
-                    # properties is a dict in our Link model
                     props = action.properties or {}
                     ia_list = props.get("indirectAcquisition")
                     if ia_list and isinstance(ia_list, list):
-                        # Find the best type in the chain
                         for ia in ia_list:
-                            # indirectAcquisition items are raw dicts from the spec
                             ia_type = str(ia.get("type", "")).lower()
                             priority = 0
                             if "epub" in ia_type: priority = 65
                             elif "pdf" in ia_type: priority = 45
                             
-                            # Check children recursively for deeper nesting (LCP, etc)
                             children = ia.get("child")
                             if children and isinstance(children, list):
                                 for child in children:
@@ -440,14 +446,14 @@ class FeedReconciler:
                                     if "epub" in c_type: priority = max(priority, 60)
                             
                             if priority > 0:
-                                candidates.append((priority, urllib.parse.urljoin(base_url, action.href)))
+                                candidates.append((priority, urllib.parse.urljoin(base_url, action.href), get_format_label(ia_type, action.href)))
         
         if not candidates:
-            return None
+            return None, None
             
         # Return the one with highest priority
         candidates.sort(key=lambda x: x[0], reverse=True)
-        return candidates[0][1]
+        return candidates[0][1], candidates[0][2]
 
     @staticmethod
     def _find_next(links: List[Link], base_url: str) -> Optional[str]:

@@ -19,7 +19,7 @@ original implementation is preserved unchanged.
 import asyncio
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import QEvent, QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -251,6 +251,10 @@ class ScrolledFeedView(BaseFeedSubView):
     def _recompute_positions(self):
         vp_w     = max(1, self._vp.width())
         header_h = UIConstants.SECTION_HEADER_HEIGHT
+        
+        # Adjust headers for scrollbar
+        self.update_header_margins(self._sb)
+
         y = 0
         for desc in self._descs:
             desc.y        = y
@@ -379,8 +383,12 @@ class ScrolledFeedView(BaseFeedSubView):
             action_widget = None
             if getattr(sec, 'self_url', None) and browser:
                 # Use default arguments in lambda to capture the CURRENT values of sec.self_url and sec.title
+                label = "See All"
+                if getattr(sec, 'total_items', None) and sec.total_items > len(sec.items):
+                    label = f"See All ({sec.total_items})"
+                
                 btn_all = browser.create_action_button(
-                    "See All",
+                    label,
                     lambda _, u=sec.self_url, t=sec.title: self.navigate_requested.emit(u, t, False)
                 )
                 action_widget = btn_all
@@ -400,7 +408,8 @@ class ScrolledFeedView(BaseFeedSubView):
             if is_grid:
                 self._grids[sid] = self._make_grid_view(sec)
             else:
-                logger.debug(f"  Building non-scrolled section: '{sec.title}' (sid={sid}, items={len(sec.items)})")
+                source_info = f" (source={sec.source_element})" if sec.source_element else ""
+                logger.debug(f"  Building non-scrolled section: '{sec.title}' (sid={sid}, items={len(sec.items)}){source_info}")
                 self._ribbons[sid] = self._make_ribbon(sec)
 
             self._descs.append(_SectionDesc(section=sec, header_h=header_h, is_grid=is_grid))

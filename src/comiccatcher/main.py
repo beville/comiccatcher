@@ -5,7 +5,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from typing import Optional
+from typing import Optional, Tuple
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from qasync import QEventLoop

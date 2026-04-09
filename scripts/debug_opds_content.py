@@ -6,6 +6,7 @@ import json
 import urllib.parse
 import math
 import re
+import httpx
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
@@ -51,8 +52,23 @@ async def main():
         try:
             console.print(f"[bold blue]Fetching content from:[/bold blue] {args.url}")
             
-            resp = await api.get(args.url)
-            resp.raise_for_status()
+            try:
+                resp = await api.get(args.url)
+                resp.raise_for_status()
+            except httpx.ConnectError:
+                console.print(f"\n[bold red]Error: Connection failed.[/bold red] The server at [cyan]{args.url}[/cyan] is unreachable or not responding.")
+                return
+            except httpx.TimeoutException:
+                console.print(f"\n[bold red]Error: Request timed out.[/bold red] The server took too long to respond.")
+                return
+            except httpx.HTTPStatusError as e:
+                console.print(f"\n[bold red]HTTP Error {e.response.status_code}:[/bold red] {e.response.reason_phrase}")
+                if e.response.status_code == 401:
+                    console.print("[yellow]Hint: This feed requires authentication. Try providing --username and --password.[/yellow]")
+                return
+            except httpx.RequestError as e:
+                console.print(f"\n[bold red]Network Error:[/bold red] {str(e)}")
+                return
             
             content_type = resp.headers.get("Content-Type", "")
             console.print(f"Content-Type: [cyan]{content_type}[/cyan]")
@@ -311,7 +327,8 @@ def handle_feed(raw_data, url, console, args):
         layout_name = "GRID" if section.layout == SectionLayout.GRID else "RIBBON"
         layout_style = "bold yellow" if section.layout == SectionLayout.GRID else "dim cyan"
 
-        table = Table(title=f"\nSection {i+1}: {section.title} (Layout: [{layout_style}]{layout_name}[/{layout_style}])", box=None)
+        source_info = f" [dim]({section.source_element})[/dim]" if section.source_element else ""
+        table = Table(title=f"\nSection {i+1}: {section.title} (Layout: [{layout_style}]{layout_name}[/{layout_style}]){source_info}", box=None)
         table.add_column("Type", style="cyan")
         table.add_column("Title", style="magenta")
         table.add_column("Identifier", style="green")

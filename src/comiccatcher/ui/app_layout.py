@@ -6,7 +6,7 @@ import urllib.parse
 from pathlib import Path
 from urllib.parse import urljoin
 
-from typing import List, Dict, Optional, Set, Any, Union
+from typing import List, Dict, Optional, Set, Any, Union, Tuple
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGridLayout,
     QListWidget, QListWidgetItem, QStackedWidget, QLabel, QPushButton, QFrame,
@@ -899,6 +899,7 @@ class MainWindow(QMainWindow):
         self.config_manager.set_last_view_type("feed")
         self.config_manager.set_last_feed_id(feed.id)
         self.current_feed_id = feed.id
+        self.active_tab = "feed"
         
         self.api_client = APIClient(feed)
         self.opds_client.api = self.api_client
@@ -937,7 +938,6 @@ class MainWindow(QMainWindow):
                 self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
                 self.feed_browser.setFocus()
         
-        self.active_tab = "feed"
         self.search_root_view.update_data(feed.search_history, feed.pinned_searches)
         self.update_header()
 
@@ -1070,9 +1070,18 @@ class MainWindow(QMainWindow):
         self.feed_detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager, context_pubs=context_pubs)
 
     def on_jump_to_history(self, index):
+        if index < 0:
+            return
+            
         hist, _ = self.get_current_history()
+        if not hist or index >= len(hist):
+            logger.warning(f"on_jump_to_history: invalid index {index} for history of size {len(hist)}")
+            return
+
+        # Truncate forward history
         hist = hist[:index + 1]
         self.set_current_history(hist, index)
+        
         entry = hist[index]
         if entry["type"] == "browser":
             self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)

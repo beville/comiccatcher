@@ -129,3 +129,8 @@ class CollapsibleSection(QWidget):
                 else:
                     self.content_widget.setMinimumHeight(0)
                     self.content_widget.setMaximumHeight(16777215) # Default QWIDGET_SIZE_MAX
+
+    def set_right_margin(self, margin: int):
+        """Adjusts the right margin of the header, typically for scrollbar awareness."""
+        m = self.header_layout.contentsMargins()
+        self.header_layout.setContentsMargins(m.left(), m.top(), margin, m.bottom())

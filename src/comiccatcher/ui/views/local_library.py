@@ -1056,10 +1056,16 @@ class LocalLibraryView(BaseBrowserView):
 
     def recalculate_heights(self):
         """Forces all child library sections to update their grid heights."""
+        # Calculate scrollbar width for header margins
+        sb = self.grouped_scroll.verticalScrollBar()
+        sb_width = sb.width() if sb.isVisible() else 0
+        header_margin = sb_width + UIConstants.scale(10)
+
         for i in range(self.grouped_layout.count()):
             item = self.grouped_layout.itemAt(i)
             if item and item.widget() and isinstance(item.widget(), LibrarySection):
                 section = item.widget()
+                section.set_right_margin(header_margin)
                 if section.is_grid and not section._is_collapsed:
                     section._update_grid_height()
 

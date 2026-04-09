@@ -103,7 +103,8 @@ class PagedFeedView(BaseFeedSubView):
 
         for section in page.sections:
             layout = section.layout
-            logger.debug(f"  Section '{section.title}': layout={'GRID' if layout == SectionLayout.GRID else 'RIBBON'} (items={len(section.items)})")
+            source_info = f" (source={section.source_element})" if section.source_element else ""
+            logger.debug(f"  Section '{section.title}': layout={'GRID' if layout == SectionLayout.GRID else 'RIBBON'} (items={len(section.items)}){source_info}")
             self._add_section(section, layout)
             
         self.content_layout.addWidget(self._spacer)
@@ -139,8 +140,12 @@ class PagedFeedView(BaseFeedSubView):
         # Wrapping
         action_widget = None
         if getattr(section, 'self_url', None) and browser:
+            label = "See All"
+            if getattr(section, 'total_items', None) and section.total_items > len(section.items):
+                label = f"See All ({section.total_items})"
+                
             btn_all = browser.create_action_button(
-                "See All",
+                label,
                 lambda _, u=section.self_url, t=section.title: self.navigate_requested.emit(u, t, False)
             )
             action_widget = btn_all
@@ -206,6 +211,10 @@ class PagedFeedView(BaseFeedSubView):
         s = UIConstants.scale
         vp_width = self.scroll_area.viewport().width()
         if vp_width < s(100): vp_width = self.width()
+        
+        # Adjust headers for scrollbar
+        self.update_header_margins(self.scroll_area.verticalScrollBar())
+
         vp_width -= UIConstants.VIEWPORT_MARGIN
         if vp_width < s(100): return
         
