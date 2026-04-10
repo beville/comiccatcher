@@ -237,7 +237,7 @@ class UIConstants:
 
     # Non-scaled logic constants
     ELIDED_TEXT_WIDTH_FACTOR = 1.7
-    ITEMS_PER_PAGE = 100
+    DEFAULT_PAGING_STRIDE = 50
     SPARSE_FETCH_BUFFER = 1
     MAX_CONCURRENT_FETCHES = 3
     SCROLL_DEBOUNCE_MS = 250

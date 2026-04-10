@@ -260,6 +260,8 @@ class FeedReconciler:
                 main_sec.total_items = root_total
             if root_next:
                 main_sec.next_url = root_next
+            if root_ipp is not None:
+                main_sec.items_per_page = root_ipp
         
         for section in sections:
             if section.is_main or section.source_element in ("root:publications", "root:navigation"):

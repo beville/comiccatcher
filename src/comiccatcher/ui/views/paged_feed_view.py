@@ -114,7 +114,9 @@ class PagedFeedView(BaseFeedSubView):
         self.scroll_area.verticalScrollBar().setValue(0)
 
     def _add_section(self, section: FeedSection, layout: SectionLayout):
-        model = FeedBrowserModel(items_per_page=len(section.items))
+        # Paged views typically show one static page at a time.
+        # We use the actual item count as the stride to ensure local rows map correctly to this page.
+        model = FeedBrowserModel(items_per_page=len(section.items) or UIConstants.DEFAULT_PAGING_STRIDE)
         
         if layout == SectionLayout.RIBBON:
             view = BaseCardRibbon(self, show_labels=self._show_labels)

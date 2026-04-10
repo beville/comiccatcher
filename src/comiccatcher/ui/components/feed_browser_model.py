@@ -1,6 +1,7 @@
 from typing import List, Optional, Dict, Set, Any
 from PyQt6.QtCore import Qt, QAbstractListModel, QModelIndex, QSize, pyqtSignal
 from comiccatcher.models.feed_page import FeedItem, ItemType as FeedItemType
+from comiccatcher.ui.theme_manager import UIConstants
 from enum import Enum
 
 class CompositeItemType(Enum):
@@ -28,9 +29,9 @@ class FeedBrowserModel(QAbstractListModel):
     page_request_needed = pyqtSignal(int)
     cover_request_needed = pyqtSignal(str)
 
-    def __init__(self, items_per_page: int = 100, collapsed_sections: Optional[Set[str]] = None):
+    def __init__(self, items_per_page: int = None, collapsed_sections: Optional[Set[str]] = None):
         super().__init__()
-        self._items_per_page = items_per_page
+        self._items_per_page = items_per_page or UIConstants.DEFAULT_PAGING_STRIDE
         
         # Sparse buffer for the MAIN grid section: { absolute_index: FeedItem }
         self._sparse_items: Dict[int, FeedItem] = {}

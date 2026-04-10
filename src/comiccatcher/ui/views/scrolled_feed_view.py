@@ -117,7 +117,7 @@ class ScrolledFeedView(BaseFeedSubView):
         self._current_context_id: float = 0
         self._pagination_template: Optional[str] = None
         self._is_offset_based: bool = False
-        self._items_per_page:  int  = UIConstants.ITEMS_PER_PAGE
+        self._items_per_page:  int  = UIConstants.DEFAULT_PAGING_STRIDE
         self._active_sparse_tasks: Dict[str, asyncio.Task] = {}
         self._pending_page_requests: List[int] = []
         self._main_grid_sid: Optional[str] = None
@@ -152,7 +152,15 @@ class ScrolledFeedView(BaseFeedSubView):
         main = page.main_section
 
         self._main_grid_sid  = main.section_id if main else None
-        self._items_per_page = (main.items_per_page or 100) if main else 100
+        
+        # Robust items_per_page detection:
+        # 1. Use metadata if the reconciler found it
+        # 2. Use the actual count of the first page we just received
+        # 3. Fallback to constant as a "safe" stride for empty feeds to avoid div-by-zero
+        if main:
+            self._items_per_page = main.items_per_page or len(main.items) or UIConstants.DEFAULT_PAGING_STRIDE
+        else:
+            self._items_per_page = UIConstants.DEFAULT_PAGING_STRIDE
         
         logger.debug(f"ScrolledFeedView: Interpreting '{page.title}' - is_paginated={page.is_paginated}, main_grid_section='{main.title if main else 'None'}'")
 
@@ -432,7 +440,7 @@ class ScrolledFeedView(BaseFeedSubView):
         # Intercept wheel events so they drive the outer scrollbar
         view.viewport().installEventFilter(self)
 
-        model = FeedBrowserModel(items_per_page=sec.items_per_page or 100)
+        model = FeedBrowserModel(items_per_page=sec.items_per_page or UIConstants.DEFAULT_PAGING_STRIDE)
         # Single-section init: no HEADER composite row, just GRID_ITEM rows
         model.set_sections([sec], main_grid_section_id=sec.section_id)
         model.page_request_needed.connect(self._on_page_needed)
@@ -685,8 +693,18 @@ class ScrolledFeedView(BaseFeedSubView):
             if ctx_id != self._current_context_id:
                 return
             page = FeedReconciler.reconcile(feed, url)
-            main = (max(page.sections, key=lambda s: len(s.items))
-                    if page.sections else None)
+            
+            # Find the section that matches our main grid ID
+            main = None
+            for s in page.sections:
+                if s.section_id == self._main_grid_sid:
+                    main = s
+                    break
+            
+            if not main:
+                # Fallback to prioritized heuristic if ID didn't match
+                main = page.main_section
+
             if main:
                 model = self._models.get(self._main_grid_sid)
                 if model:
