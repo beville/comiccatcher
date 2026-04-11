@@ -13,9 +13,7 @@
 
 ## Reader & UI
 
-* add mini-details in feed view -  download in place of delete button
-* mini-details - add read, select buttons.
-* new "read" svg, maybe also "mark as read", "mark as unread"
+* mini-details in feed view -  connect download button
 
 * keystrokes for feed and library
 * reader keystrokes and controls fixing

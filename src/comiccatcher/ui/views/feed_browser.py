@@ -6,7 +6,7 @@ import uuid
 from typing import Dict, Optional, Set
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, 
-    QMenu, QStackedWidget, QApplication
+    QMenu, QStackedWidget, QApplication, QPushButton
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint
 from PyQt6.QtGui import QPixmap
@@ -588,9 +588,10 @@ class FeedBrowser(BaseBrowserView):
             return
 
         # 1. Immediate UI update with what we have
-        self._populate_mini_detail(item)
+        self._populate_mini_detail(item, model)
 
-        # 2. Add Actions (New)
+        # 2. Position and show (only on initial request)
+
         self.detail_popover.clear_actions()
 
         # A. Read Action (Emits item_clicked with context)
@@ -640,8 +641,13 @@ class FeedBrowser(BaseBrowserView):
 
         self.detail_popover.add_action("select", "Select", do_select)
 
-        # C. Download Action (Placeholder)
-        self.detail_popover.add_action("download", "Download", lambda: None)
+        # C. Download Action (Connected to single-item download)
+        btn_down = self.detail_popover.add_action("download", "Download", lambda: self._on_mini_detail_download(item))
+        
+        # Initial state based on current metadata
+        from comiccatcher.api.feed_reconciler import FeedReconciler
+        download_url, _ = FeedReconciler._find_acquisition_link(item.raw_pub, self._last_loaded_url)
+        btn_down.setEnabled(download_url is not None)
 
         # 3. Position and show (only on initial request)
 
@@ -670,13 +676,14 @@ class FeedBrowser(BaseBrowserView):
             full_url = urljoin(self._last_loaded_url, manifest_url)
             asyncio.create_task(self._enrich_mini_detail(item, full_url, self._active_popover_load_id))
 
-    def _populate_mini_detail(self, item):
+    def _populate_mini_detail(self, item, model):
         """UI-only logic to update popover content from item.raw_pub."""
         pub = item.raw_pub
         meta = pub.metadata
         if not meta: return
-
+        
         # 1. Map OPDS Contributors to credits string
+        # ... (rest of formatting logic)
         creds = []
         roles = [
             ("author", "Author"), ("writer", "Writer"), ("penciler", "Penciller"),
@@ -723,11 +730,23 @@ class FeedBrowser(BaseBrowserView):
         self.detail_popover.set_show_cover(False)
 
         self.detail_popover.populate(
-
             data=data, 
             title=meta.title, 
             subtitle=meta.subtitle
         )
+
+        # 5. Check acquisition to enable/disable download button
+        from comiccatcher.api.feed_reconciler import FeedReconciler
+        download_url, _ = FeedReconciler._find_acquisition_link(item.raw_pub, self._last_loaded_url)
+
+        # Find the download button in popover to update it
+        # (This is why returning the button from add_action was useful, but we also can find it)
+        for i in range(self.detail_popover.actions_layout.count()):
+            btn = self.detail_popover.actions_layout.itemAt(i).widget()
+            if isinstance(btn, QPushButton) and btn.property("icon_name") == "download":
+                btn.setEnabled(download_url is not None)
+                break
+
 
     async def _enrich_mini_detail(self, item, full_url, load_id):
         """Async worker to fetch full manifest and update popover."""
@@ -754,8 +773,18 @@ class FeedBrowser(BaseBrowserView):
 
             # Update UI if popover is still visible
             if self.detail_popover.isVisible():
-                self._populate_mini_detail(item)
+                self._populate_mini_detail(item, None)
 
         except Exception as e:
             logger.error(f"Failed to enrich popover metadata from {full_url}: {e}")
+
+    def _on_mini_detail_download(self, item):
+        """Starts a download for a single item from the popover."""
+        from comiccatcher.api.feed_reconciler import FeedReconciler
+        pub = item.raw_pub
+        url, filename = FeedReconciler._find_acquisition_link(pub, self._last_loaded_url)
+        if url:
+            self.download_requested.emit(pub, url)
+        else:
+            logger.warning(f"No download URL found for {item.title}")
 

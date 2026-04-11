@@ -140,7 +140,7 @@ class MiniDetailPopover(QFrame, BubbleMixin):
         else:
             self.setFixedWidth(self.NO_COVER_WIDTH)
 
-    def add_action(self, icon_name: str, tooltip: str, on_click: Callable):
+    def add_action(self, icon_name: str, tooltip: str, on_click: Callable) -> QPushButton:
         self.actions_widget.show()
         if self.info_layout.indexOf(self.actions_widget) == -1:
             self.info_layout.addWidget(self.actions_widget)
@@ -157,6 +157,7 @@ class MiniDetailPopover(QFrame, BubbleMixin):
         
         btn.clicked.connect(lambda: [on_click(), self.hide()])
         self.actions_layout.addWidget(btn)
+        return btn
 
     def set_cover_pixmap(self, pixmap: QPixmap):
         """Sets the cover pixmap, scaling it to fit while preserving aspect ratio."""
