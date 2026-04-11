@@ -1,8 +1,7 @@
 # ComicCatcher TODO
 
-* bug with scrolled feeds.  See komga browse. Scroll to end.  Off-by-one.  
-   Maybe the pagination logic needs shoring up
-      There might need to be a special case for the first page, as it may often not follow the same pattern as the others.
+* bug with scrolled feeds or codex giving wrong series count.
+    manifests as extra cards at end of seroes scroll in codex (think codex is culprit when counts aren't updated when files are removed/added)
 
 * handle pagination metadata that may be corrupt or buggy.  Might need an "unknown" concept for itemsperpage, and number of items if the first page data doesn't match those numbers
    See: https://www.lirtuel.be/v1/bundles.opds2
@@ -10,7 +9,7 @@
 * adjacentbook popover - use title (and maybe subtitle)
 * details views - handle wide covers
 * details views - use more metadata (web, genre...)
-* details viw
+* details viw max width, maybe centered
 
 * Bad OPDS pages to maybe work around:
    komga > Latest Series See All, somehow goes to publications

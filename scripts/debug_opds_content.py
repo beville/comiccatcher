@@ -308,6 +308,11 @@ def handle_feed(raw_data, url, console, args):
                 console.print(f"  - [bold cyan]{rel:8}[/bold cyan]: {paging_links[rel]}")
 
     console.print(f"Offset-based: {'[green]Yes[/green]' if page.is_offset_based else '[red]No[/red]'}")
+    console.print(f"Paging Base:  [cyan]{page.pagination_base_number}[/cyan]")
+
+    if page.first_page_url:
+        console.print(f"First Page:   [dim cyan]{page.first_page_url}[/dim cyan]")
+
     if page.pagination_template:
         console.print(f"Paging Templ: [bold magenta]{page.pagination_template}[/bold magenta]")
     else:

@@ -227,7 +227,7 @@ class MiniDetailPopover(QFrame, BubbleMixin):
                 logger.debug(f"MiniDetailPopover: Rendering web link button for: {target_url}")
                 btn_web = QPushButton()
                 btn_web.setObjectName("icon_button")
-                btn_web.setIcon(ThemeManager.get_icon("feeds", "accent"))
+                btn_web.setIcon(ThemeManager.get_icon("globe", "accent"))
                 btn_web.setToolTip(f"Open in browser: {target_url}")
                 btn_web.setFixedSize(s(24), s(24))
                 btn_web.setCursor(Qt.CursorShape.PointingHandCursor)

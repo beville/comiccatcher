@@ -116,6 +116,8 @@ class ScrolledFeedView(BaseFeedSubView):
         # Page-fetching state
         self._current_context_id: float = 0
         self._pagination_template: Optional[str] = None
+        self._pagination_base_number: int = 1
+        self._first_page_url: Optional[str] = None
         self._is_offset_based: bool = False
         self._items_per_page:  int  = UIConstants.DEFAULT_PAGING_STRIDE
         self._active_sparse_tasks: Dict[str, asyncio.Task] = {}
@@ -143,6 +145,8 @@ class ScrolledFeedView(BaseFeedSubView):
     def render(self, page: FeedPage, template: Optional[str], is_offset: bool, ctx_id: float, target_offset: Optional[int] = None):
         self._current_context_id = ctx_id
         self._pagination_template = template
+        self._pagination_base_number = page.pagination_base_number
+        self._first_page_url = page.first_page_url
         self._is_offset_based     = is_offset
         self._cancel_tasks()
         self.busy_updated.emit(False)
@@ -676,8 +680,17 @@ class ScrolledFeedView(BaseFeedSubView):
         self._pending_page_requests.clear()
         
         for p in to_fetch:
-            val = (p - 1) * ipp if self._is_offset_based else p
-            url = self._pagination_template.replace("{page}", str(val))
+            if p == 1 and self._first_page_url:
+                url = self._first_page_url
+            else:
+                if self._is_offset_based:
+                    val = (p - 1) * ipp
+                else:
+                    # If base is 0, then page 1 uses index 0, page 2 uses index 1, etc.
+                    val = (p - 1) if self._pagination_base_number == 0 else p
+                
+                url = self._pagination_template.replace("{page}", str(val))
+            
             key = f"{self._current_context_id}_{p}"
             
             task = asyncio.create_task(

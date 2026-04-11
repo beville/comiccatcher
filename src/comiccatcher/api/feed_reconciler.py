@@ -49,9 +49,23 @@ class FeedReconciler:
 
         # Capture root-level pagination metadata for later assignment
         m = feed.metadata
+        curr_page = (m.currentPage if m else None) or 1
         root_total = m.numberOfItems if m else None
         root_next = FeedReconciler._find_next(feed.links, base_url)
         root_ipp = m.itemsPerPage if m else None
+
+        # Explicitly find the 'first' page URL
+        first_page_url = None
+        if feed.links:
+            for l in feed.links:
+                rels = [l.rel] if isinstance(l.rel, str) else (l.rel or [])
+                if "first" in rels:
+                    first_page_url = urllib.parse.urljoin(base_url, l.href)
+                    break
+        
+        # Fallback: If no 'first' link, and we are on page 1, current is first.
+        if not first_page_url and curr_page == 1:
+            first_page_url = self_url
 
         # Sanitize to create a stable ID for the entire logical feed.
         # Example: /codex/opds/v2.0/p/0/1 -> /codex/opds/v2.0/p/
@@ -115,8 +129,10 @@ class FeedReconciler:
                 if group.navigation:
                     for link in group.navigation:
                         rel_str = "".join(link.rel or []) if isinstance(link.rel, list) else (link.rel or "")
-                        if "facet" in rel_str or "http://opds-spec.org/facet" in rel_str: continue
-                        if has_top_start and ("start" in rel_str): continue
+                        if "facet" in rel_str or "http://opds-spec.org/facet" in rel_str:
+                            continue
+                        if has_top_start and ("start" in rel_str):
+                            continue
                             
                         group_items.append(FeedItem(
                             type=ItemType.FOLDER,
@@ -197,10 +213,8 @@ class FeedReconciler:
                         if section.total_items: section.total_items -= 1
 
         # 4. Determine Global Page
-        m = feed.metadata
-        curr_page = (m.currentPage if m else None) or 1
-        # ... (rest of page detection logic) ...
-
+        # (Already defined above as part of root metadata capture)
+        
         # 5. Determine Total Pages
         total_pages = None
         if m and m.numberOfItems and m.itemsPerPage:
@@ -210,6 +224,7 @@ class FeedReconciler:
         # 6. Detect Pagination Template
         pagination_template = None
         is_offset_based = False
+        pagination_base_number = 1
         
         next_link = FeedReconciler._find_next(feed.links, base_url)
         if next_link:
@@ -217,12 +232,18 @@ class FeedReconciler:
             if match:
                 pre, grp, p_val = match.groups()
                 pagination_template = next_link.replace(f"/{pre}/{grp}/{p_val}", f"/{pre}/{grp}/{{page}}")
+                # Heuristic: If we are on Page 1 (metadata), and the NEXT link says Page 1, then base is 0.
+                if curr_page == 1 and int(p_val) == 1:
+                    pagination_base_number = 0
             else:
                 match = re.search(r'(?P<key>page|offset|start)=(?P<val>\d+)', next_link)
                 if match:
                     key, val = match.groups()
                     is_offset_based = (key == 'offset' or key == 'start')
                     pagination_template = next_link.replace(f"{key}={val}", f"{key}={{page}}")
+                    # If it's a page-based key and next is 1, then base is 0
+                    if not is_offset_based and curr_page == 1 and int(val) == 1:
+                        pagination_base_number = 0
 
         # 7. Detect Search Template
         search_template = None
@@ -245,6 +266,8 @@ class FeedReconciler:
             is_paginated=is_paginated,
             feed_items_per_page=root_ipp,
             pagination_template=pagination_template,
+            pagination_base_number=pagination_base_number,
+            first_page_url=first_page_url,
             search_template=search_template,
             is_offset_based=is_offset_based
         )
@@ -258,6 +281,7 @@ class FeedReconciler:
             # Transfer root metadata to the main section
             if root_total is not None:
                 main_sec.total_items = root_total
+            
             if root_next:
                 main_sec.next_url = root_next
             if root_ipp is not None:

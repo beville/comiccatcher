@@ -64,6 +64,8 @@ class FeedPage(BaseModel):
     facets: List[Any] = [] # List of Group objects or dicts for filters
 
     pagination_template: Optional[str] = None # {page}
+    pagination_base_number: int = 1           # Does page 1 use index 0 or 1?
+    first_page_url: Optional[str] = None      # Explicit URL for page 1
     search_template: Optional[str] = None     # {query} or {searchTerms}
     is_offset_based: bool = False
     is_paginated: bool = False
