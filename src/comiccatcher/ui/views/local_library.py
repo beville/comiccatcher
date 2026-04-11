@@ -1406,6 +1406,21 @@ class LocalLibraryView(BaseBrowserView):
             
         if not item: return
         
+        # Gather context paths for navigation
+        context_paths = []
+        if isinstance(list_widget, QListWidget):
+            for i in range(list_widget.count()):
+                p = list_widget.item(i).data(Qt.ItemDataRole.UserRole)
+                if isinstance(p, Path) and not p.is_dir():
+                    context_paths.append(p)
+        else:
+            model = list_widget.model()
+            if model:
+                for i in range(model.rowCount()):
+                    p = model.index(i, 0).data(Qt.ItemDataRole.UserRole)
+                    if isinstance(p, Path) and not p.is_dir():
+                        context_paths.append(p)
+
         path_or_data = item.data(Qt.ItemDataRole.UserRole)
         # If it's a folder, ignore for now
         if isinstance(path_or_data, Path) and path_or_data.is_dir():
@@ -1434,10 +1449,10 @@ class LocalLibraryView(BaseBrowserView):
         self.detail_popover.clear_actions()
         
         # Add Actions
-        # 1. Read Action
+        # 1. Details Action
         if file_path:
             p = Path(file_path)
-            self.detail_popover.add_action("book", "Read", lambda: self.on_open_comic(p))
+            self.detail_popover.add_action("eye", "Details", lambda: self.on_open_comic(p, context_paths))
 
         # 2. Select Action
         def do_select():

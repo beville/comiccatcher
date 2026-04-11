@@ -591,13 +591,12 @@ class FeedBrowser(BaseBrowserView):
         self._populate_mini_detail(item, model)
 
         # 2. Position and show (only on initial request)
-
         self.detail_popover.clear_actions()
 
-        # A. Read Action (Emits item_clicked with context)
+        # A. Details Action (Emits item_clicked with context)
         subview = self.scrolled_view if self._paging_mode == "scrolled" else self.paged_view
         context_pubs = subview.gather_context_pubs(model) if model else []
-        self.detail_popover.add_action("book", "Read", lambda: self._on_item_clicked(item, context_pubs))
+        self.detail_popover.add_action("eye", "Details", lambda: self._on_item_clicked(item, context_pubs))
 
         # B. Select Action
         def do_select():
