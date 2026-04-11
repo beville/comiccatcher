@@ -1215,7 +1215,7 @@ class MainWindow(QMainWindow):
         self.content_stack.setCurrentIndex(ViewIndex.FEED_LIST)
 
     def on_read_local_comic(self, path, context_paths=None):
-        self.local_reader_view.load_cbz(path, context_paths=context_paths)
+        self.local_reader_view.load_archive(path, context_paths=context_paths)
         self.content_stack.setCurrentIndex(ViewIndex.LOCAL_READER)
         self.sidebar.hide()
         self.top_header.hide()
@@ -1292,7 +1292,7 @@ class MainWindow(QMainWindow):
                 
                 # Get cover from cache
                 pixmap = QPixmap()
-                cover_url = f"local-cbz://{target_path.absolute()}/_cover_thumb"
+                cover_url = f"local-archive://{target_path.absolute()}/_cover_thumb"
                 cache_path = self.image_manager._get_cache_path(cover_url)
                 if cache_path.exists():
                     pixmap.load(str(cache_path))

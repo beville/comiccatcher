@@ -6,23 +6,20 @@
 * handle pagination metadata that may be corrupt or buggy.  Might need an "unknown" concept for itemsperpage, and number of items if the first page data doesn't match those numbers
    See: https://www.lirtuel.be/v1/bundles.opds2
 
+* Bad OPDS pages to maybe work around:
+   komga > Latest Series See All, somehow goes to publications
+
 * adjacentbook popover - use title (and maybe subtitle)
 * details views - handle wide covers
 * details views - use more metadata (web, genre...)
 * details viw max width, maybe centered
-
-* Bad OPDS pages to maybe work around:
-   komga > Latest Series See All, somehow goes to publications
 
 * keystrokes for feed and library
 * reader keystrokes and controls fixing
 
 * scrolled view optimize page and thumb fetching
 
-* add support for cbr, cbt.  
-* add support for pdf.  
 * add support for minimal epub 
-
 
 * pypi account
 * windows and mac testing

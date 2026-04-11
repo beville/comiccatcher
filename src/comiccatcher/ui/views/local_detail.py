@@ -13,7 +13,7 @@ from comiccatcher.config import ConfigManager
 from comiccatcher.logger import get_logger
 from comiccatcher.api.image_manager import ImageManager
 from comiccatcher.api.local_db import LocalLibraryDB
-from comiccatcher.ui.local_archive import read_first_image
+from comiccatcher.ui.local_archive import read_archive_first_image
 from comiccatcher.ui.local_comicbox import flatten_comicbox, read_comicbox_dict, read_comicbox_cover, generate_comic_labels
 from comiccatcher.ui.theme_manager import ThemeManager, UIConstants
 from comiccatcher.ui.views.base_detail import BaseDetailView
@@ -96,8 +96,10 @@ class LocalDetailView(BaseDetailView):
 
             # Action Buttons
             self.btn_read = self.create_action_button("Read", self._on_read_clicked, icon_name="book")
-            is_cbz = self._path.suffix.lower() == ".cbz"
-            self.btn_read.setEnabled(is_cbz)
+            # Support all comic formats
+            COMIC_EXTS = {".cbz", ".cbr", ".cb7", ".cbt", ".pdf"}
+            is_comic = self._path.suffix.lower() in COMIC_EXTS
+            self.btn_read.setEnabled(is_comic)
             
             if not hasattr(self, 'actions_layout'):
                 self.actions_layout = QHBoxLayout()
@@ -131,7 +133,7 @@ class LocalDetailView(BaseDetailView):
             info_layout.addStretch()
             
             # Async tasks for heavy things (Cover image and DB progress)
-            if is_cbz:
+            if is_comic:
                 asyncio.create_task(self._load_cover(self._path))
                 if self.db:
                     asyncio.create_task(self._load_progress(self._path))
@@ -145,14 +147,14 @@ class LocalDetailView(BaseDetailView):
         pass
 
     async def _load_cover(self, path: Path):
-        url = f"local-cbz://{path.absolute()}/_cover"
+        url = f"local-archive://{path.absolute()}/_cover"
         cache_path = self.image_manager._get_cache_path(url)
         
         if not cache_path.exists():
             try:
                 data = await asyncio.to_thread(read_comicbox_cover, path)
                 if not data:
-                    res = await asyncio.to_thread(read_first_image, path)
+                    res = await asyncio.to_thread(read_archive_first_image, path)
                     if res: _, data = res
                 if data:
                     with open(cache_path, "wb") as f:

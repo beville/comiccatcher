@@ -15,7 +15,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QImage, 
 from comiccatcher.config import ConfigManager, CONFIG_DIR
 from comiccatcher.logger import get_logger
 from comiccatcher.api.image_manager import ImageManager
-from comiccatcher.ui.local_archive import read_first_image
+from comiccatcher.ui.local_archive import read_archive_first_image
 from comiccatcher.ui.local_comicbox import flatten_comicbox, read_comicbox_dict, subtitle_from_flat, read_comicbox_cover, generate_comic_labels
 from comiccatcher.ui.theme_manager import ThemeManager, UIConstants
 from comiccatcher.api.local_db import LocalLibraryDB
@@ -27,7 +27,7 @@ from comiccatcher.ui.components.mini_detail_popover import MiniDetailPopover
 
 logger = get_logger("ui.local_library")
 
-COMIC_EXTS = {".cbz", ".cbr", ".cb7", ".pdf"}
+COMIC_EXTS = {".cbz", ".cbr", ".cb7", ".cbt", ".pdf"}
 _COVER_URL_SUFFIX = "_cover_thumb"
 
 
@@ -125,7 +125,7 @@ def populate_item_from_row(item, row_dict, label_focus, is_folder_mode, image_ma
     set_item_data(item, ItemRoles.LABELS, (card_primary, secondary))
 
     # 2. Try synchronous cache check to prevent pop-in
-    url = f"local-cbz://{file_path.absolute()}/{_COVER_URL_SUFFIX}"
+    url = f"local-archive://{file_path.absolute()}/{_COVER_URL_SUFFIX}"
     cache_path = image_manager._get_cache_path(url)
     cached = QPixmapCache.find(str(cache_path))
     if cached:
@@ -137,10 +137,10 @@ def populate_item_from_row(item, row_dict, label_focus, is_folder_mode, image_ma
 
 async def load_item_thumbnail(path: Path, item, image_manager, meta_sem):
     """Shared async logic to extract, save, and load a comic thumbnail."""
-    if path.suffix.lower() not in (".cbz", ".cbr", ".cb7"):
+    if path.suffix.lower() not in COMIC_EXTS:
         return
 
-    url = f"local-cbz://{path.absolute()}/{_COVER_URL_SUFFIX}"
+    url = f"local-archive://{path.absolute()}/{_COVER_URL_SUFFIX}"
     cache_path = image_manager._get_cache_path(url)
 
     # Secondary check in case it was cached while we were waiting for semaphore
@@ -152,7 +152,7 @@ async def load_item_thumbnail(path: Path, item, image_manager, meta_sem):
             try:
                 data = await asyncio.to_thread(read_comicbox_cover, path)
                 if not data:
-                    res = await asyncio.to_thread(read_first_image, path)
+                    res = await asyncio.to_thread(read_archive_first_image, path)
                     if res: _, data = res
                 if data:
                     await asyncio.to_thread(_save_thumbnail, data, cache_path)
@@ -782,7 +782,7 @@ class LocalLibraryView(BaseBrowserView):
 
     def _save_cover_to_cache(self, path: Path, cover_bytes: bytes) -> None:
         """Called from scanner worker thread to save a resized thumbnail to disk cache."""
-        url = f"local-cbz://{path.absolute()}/{_COVER_URL_SUFFIX}"
+        url = f"local-archive://{path.absolute()}/{_COVER_URL_SUFFIX}"
         cache_path = self.image_manager._get_cache_path(url)
         if not cache_path.exists():
             _save_thumbnail(cover_bytes, cache_path)
