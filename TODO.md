@@ -18,10 +18,6 @@
 
 * better feedback on failed connection to server
 
-* Warning about logo fetch fail.  Is that always happing in the background?
-2026-04-10 23:12:55,230 - httpx - INFO - HTTP Request: GET https://test.opds.io/favicon.ico "HTTP/1.1 404 Not Found"
-2026-04-10 23:12:55,233 - comiccatcher.api.image_manager - WARNING - Failed to fetch image https://test.opds.io/favicon.ico - Status: 404
-
 * paging nav buttons should update before fetch??
 
 
@@ -35,12 +31,13 @@
 ## Misc
 
 * fix  "komgaandroid" URL hack in `feed_management.py`.
-* Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
-* String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.
-* more consolidation/deduplcation of code
-* less magic numbers
-* maybe more  `QFontMetrics` to calculate offsets proportional to font size.
-* better text eliding via QTextLayout, maybe
+* refactoring opportunities:
+  * Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
+  * String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.
+  * more consolidation/deduplcation of code
+  * less magic numbers
+  * maybe more  `QFontMetrics` to calculate offsets proportional to font size.
+  * better text eliding via QTextLayout, maybe
 
 ## Future
 * OPDS 1.2 

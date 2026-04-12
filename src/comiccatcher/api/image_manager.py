@@ -15,6 +15,7 @@ class ImageManager:
         self.api_client = api_client
         self._memory_cache = {} # URL -> Base64 string
         self._created_subdirs = set()
+        self._pending_tasks = {} # URL -> asyncio.Task
 
     def get_image_sync(self, url: str):
         """Synchronously retrieves an image from cache (memory or disk)."""
@@ -58,7 +59,7 @@ class ImageManager:
             return None
 
     async def get_image_b64(self, url: str, api_client: Optional[APIClient] = None, max_dim: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
-        """Fetches an image, caches it on disk, and returns it as a Base64 string."""
+        """Fetches an image, caches it on disk, and returns it as a Base64 string. Deduplicates concurrent requests."""
         if not url:
             return None
 
@@ -66,10 +67,26 @@ class ImageManager:
         if url in self._memory_cache:
             return self._memory_cache[url]
 
-        # 2. Check Disk Cache
+        # 2. Check for in-flight task (Deduplication)
+        import asyncio
+        if url in self._pending_tasks:
+            return await self._pending_tasks[url]
+
+        # 3. Create new task
+        task = asyncio.create_task(self._fetch_image_b64(url, api_client, max_dim, timeout))
+        self._pending_tasks[url] = task
+        try:
+            return await task
+        finally:
+            self._pending_tasks.pop(url, None)
+
+    async def _fetch_image_b64(self, url: str, api_client: Optional[APIClient] = None, max_dim: Optional[int] = None, timeout: Optional[float] = None) -> Optional[str]:
+        """Internal fetch logic."""
+        # 1. Check Disk Cache
         cache_path = self._get_cache_path(url)
         if cache_path.exists():
             try:
+                import base64
                 with open(cache_path, "rb") as f:
                     data = f.read()
                     b64 = base64.b64encode(data).decode("utf-8")
@@ -78,7 +95,7 @@ class ImageManager:
             except Exception as e:
                 logger.error(f"Error reading disk cache for {url}: {e}")
 
-        # 3. Fetch from Server
+        # 2. Fetch from Server
         client = api_client or self.api_client
         if not client:
             logger.error(f"Cannot fetch {url}: No APIClient provided.")
@@ -86,19 +103,15 @@ class ImageManager:
 
         try:
             logger.debug(f"Cache miss. Fetching image: {url}")
-            # Use provided timeout or default to a reasonable value for images
             img_timeout = timeout or 15.0
             resp = await client.get(url, timeout=img_timeout)
             if resp.status_code == 200:
                 data = resp.content
                 
-                # Scale if requested and necessary
                 if max_dim:
                     from PIL import Image
                     import io
                     try:
-                        # Pillow's open() is lazy; it only reads the header to get dimensions.
-                        # This is fast enough for the main thread as it doesn't decode pixels yet.
                         with Image.open(io.BytesIO(data)) as img:
                             if img.width > max_dim or img.height > max_dim:
                                 import asyncio
@@ -106,10 +119,10 @@ class ImageManager:
                     except Exception as e:
                         logger.error(f"Error checking image dimensions for {url}: {e}")
 
-                # Save to disk
                 with open(cache_path, "wb") as f:
                     f.write(data)
 
+                import base64
                 b64 = base64.b64encode(data).decode("utf-8")
                 self._memory_cache[url] = b64
                 return b64

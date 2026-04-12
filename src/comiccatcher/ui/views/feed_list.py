@@ -146,8 +146,9 @@ class FeedListView(QWidget):
             else:
                 icon_label.setPixmap(default_icon.pixmap(icon_size, icon_size))
             
-            if f.icon_url and (not icon_pixmap or icon_pixmap.isNull()):
-                asyncio.create_task(self._load_cached_icon_widget(f, icon_label))
+            # We no longer trigger a background fetch for every feed here.
+            # Icons will be fetched only when the feed is visited (managed in FeedBrowser)
+            # or explicitly refreshed in management.
 
     async def _load_cached_icon_widget(self, feed: FeedProfile, label: QLabel):
         try:
