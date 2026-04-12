@@ -391,7 +391,9 @@ class ScrolledFeedView(BaseFeedSubView):
 
         for sec in sections:
             sid     = sec.section_id
-            is_grid = (sid == self._main_grid_sid)
+            # Render as grid if either it is the main (sparse) section, 
+            # or if the reconciler explicitly marked it as GRID layout.
+            is_grid = (sid == self._main_grid_sid or sec.layout == SectionLayout.GRID)
 
             action_widget = None
             if getattr(sec, 'self_url', None) and browser:
@@ -419,7 +421,13 @@ class ScrolledFeedView(BaseFeedSubView):
             self._headers[sid] = hdr
 
             if is_grid:
-                self._grids[sid] = self._make_grid_view(sec)
+                view = self._grids[sid] = self._make_grid_view(sec)
+                # Seed the model with initial items if this isn't the main sparse grid
+                # (The main grid is seeded in render() after its paging stride is detected)
+                if sid != self._main_grid_sid:
+                    m = self._models.get(sid)
+                    if m:
+                        m.set_items_for_page(sec.current_page or 1, sec.items)
             else:
                 source_info = f" (source={sec.source_element})" if sec.source_element else ""
                 logger.debug(f"  Building non-scrolled section: '{sec.title}' (sid={sid}, items={len(sec.items)}){source_info}")

@@ -39,15 +39,15 @@ ComicCatcher is a native desktop application built with **PyQt6**, using **qasyn
 │  Qt Event Loop (qasync)                                          │
 │                                                                  │
 │  ┌─────────────┐   ┌─────────────────────────────────────────┐  │
-│  │  Sidebar    │   │  Stacked Content Views (10 indices)     │  │
+│  │  Sidebar    │   │  Stacked Content Views (9 indices)      │  │
 │  │  - Feeds    │   │  FeedList / Browser / FeedDetail / ...  │  │
 │  │  - Library  │   │  LocalLibrary / LocalDetail / ...       │  │
-│  │  - Settings │   │  Settings / SearchRoot / SearchBrowser  │  │
+│  │  - Settings │   │  Settings / SearchRoot / ...            │  │
 │  └─────────────┘   └─────────────────────────────────────────┘  │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐    │
 │  │  API Layer (async)                                       │    │
-│  │  APIClient → OPDS2Client → ImageManager → DownloadMgr   │    │
+│  │  APIClient → OPDS2Client → FeedReconciler → ImageMgr    │    │
 │  └──────────────────────────────────────────────────────────┘    │
 │                                                                  │
 │  ┌──────────────────────────────────────────────────────────┐    │
@@ -69,6 +69,7 @@ logger.py                    Dual-output logging (console + rotating file)
 api/
   client.py                  httpx.AsyncClient with Bearer / Basic auth
   opds_v2.py                 OPDS 2.0 feed parser + in-memory JSON cache
+  feed_reconciler.py         Transforms raw OPDS feeds into unified FeedPage models
   image_manager.py           3-tier image cache: memory → disk (SHA256) → network
   download_manager.py        Background CBZ streamer with progress & cancellation
   library_scanner.py         Async local directory scanner with comicbox integration
@@ -78,6 +79,7 @@ api/
 models/
   feed.py                    FeedProfile (id, name, url, credentials, search history)
   opds.py                    OPDSFeed, Publication, Group, Link, Metadata (Pydantic v2)
+  feed_page.py               Unified FeedPage, FeedSection, and FeedItem models
 
 ui/
   app_layout.py              MainWindow: sidebar, stacked views, tabbed history, breadcrumbs
@@ -88,6 +90,18 @@ ui/
   local_archive.py           CBZ (ZIP) introspection and page extraction
   local_comicbox.py          comicbox wrapper: metadata extraction and flattening
   reader_logic.py            I/O-free reader state machine (fully unit tested)
+  utils.py                   Formatting and date parsing utilities
+  view_helpers.py            Viewport visibility and async cover fetch helpers
+
+  components/                Reusable UI building blocks
+    base_card_delegate.py    Base class for card rendering (paints titles, frames)
+    feed_card_delegate.py    OPDS-specific card rendering with badge support
+    library_card_delegate.py Local-specific card rendering with progress bars
+    base_ribbon.py           Horizontal carousel for RIBBON sections
+    feed_browser_model.py    Virtualized QAbstractListModel for grid data
+    mini_detail_popover.py   Bubble-style metadata summary popover
+    section_header.py        Collapsible header for feed sections
+    loading_spinner.py       Indeterminate async progress indicator
 
   views/
     feed_list.py             Feed selection root view
@@ -145,6 +159,14 @@ pytest.ini                   pytest config (asyncio_mode = auto)
 
 All models use **Pydantic v2** with `model_config = ConfigDict(extra='allow')` so unrecognised OPDS fields are preserved.
 
+### Unified Feed Models (`models/feed_page.py`)
+
+Raw OPDS data is reconciled into a unified hierarchy for UI rendering:
+
+- **`FeedPage`**: The root container for a single "screen" of a feed, containing sections, facets, search templates, and breadcrumbs.
+- **`FeedSection`**: A logical grouping (e.g., "Newest", "All Series") with its own items, pagination metadata, and layout type (RIBBON or GRID).
+- **`FeedItem`**: A single visual card representing a publication or a navigation folder.
+
 ---
 
 ## 6. API Layer
@@ -156,6 +178,14 @@ Thin async HTTP wrapper built on `httpx.AsyncClient`.
 ### `OPDS2Client` (`api/opds_v2.py`)
 
 High-level OPDS 2.0 parser with in-memory JSON caching.
+
+### `FeedReconciler` (`api/feed_reconciler.py`)
+
+The transformation engine that converts raw `OPDSFeed` objects into `FeedPage` structures. It handles:
+- Detecting "Main" sections for infinite scroll.
+- Normalizing pagination patterns across different server types.
+- Heuristic-based extraction of series names and issue numbers.
+- Pruning redundant server-side nesting.
 
 ### `ImageManager` (`api/image_manager.py`)
 
@@ -255,12 +285,19 @@ Reusable building blocks across different view modes.
 
 ```text
 QStyledItemDelegate (Qt)
-└── FeedCardDelegate (Paints cards, titles, and covers)
+└── BaseCardDelegate
+    ├── FeedCardDelegate     (OPDS publication card)
+    └── LibraryCardDelegate  (Local file card with progress)
+
+QAbstractListModel (Qt)
+└── FeedBrowserModel (Virtualized grid data source)
 
 QWidget (Qt)
 ├── CollapsibleSection (Expandable section container)
+├── SectionHeader (Themed header with "See All" support)
+├── MiniDetailPopover (Bubble-style metadata summary)
 └── QListView (Qt)
-    └── BaseCardRibbon (Horizontal carousel with "See All" support)
+    └── BaseCardRibbon (Horizontal carousel)
 ```
 
 ### 8.2 MainWindow (`ui/app_layout.py`)
@@ -272,13 +309,12 @@ Stack Index (ViewIndex):
 - FEED_LIST: 0
 - LIBRARY: 1
 - SETTINGS: 2
-- FEED_BROWSER: 3
-- LOCAL_DETAIL: 4
-- LOCAL_READER: 5
-- DETAIL: 6
-- READER_ONLINE: 7
-- SEARCH_ROOT: 8
-- SEARCH_BROWSER: 9
+- LOCAL_DETAIL: 3
+- LOCAL_READER: 4
+- DETAIL: 5
+- READER_ONLINE: 6
+- SEARCH_ROOT: 7
+- FEED_BROWSER: 8
 ```
 
 **Standard Navigation:**
@@ -299,6 +335,7 @@ A high-level "Traffic Cop" that coordinates feed rendering. It does not perform 
 
 - **PagedFeedView**: Traditional dashboard layout with stacked `CollapsibleSection` widgets in a `QScrollArea`. Used for highly structured, mixed-content feeds.
 - **ScrolledFeedView**: High-performance continuous scroll using a section-level virtual scroll area (`QAbstractScrollArea`). Each `FeedSection` becomes a real `SectionHeader` + content widget pair positioned directly in the viewport. Large GRID sections (up to 30 k items) use an internal `QListView` whose height is capped to the visible slice and whose scroll position is synced to the outer scrollbar — avoiding Qt's `QWIDGETSIZE_MAX` content-widget limit. Supports sparse page fetching, debounced scrubbing, and lazy thumbnail loading.
+- **Search Integration**: Redirects search queries to the relevant OPDS search template, rendering results via the standard paged/scrolled sub-views.
 
 ### FeedDetailView (`views/feed_detail.py`)
 

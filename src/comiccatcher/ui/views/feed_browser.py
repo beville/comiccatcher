@@ -24,6 +24,7 @@ from comiccatcher.ui.views.paged_feed_view import PagedFeedView
 from comiccatcher.ui.views.scrolled_feed_view import ScrolledFeedView
 from comiccatcher.ui.views.base_browser import BaseBrowserView
 from comiccatcher.ui.components.mini_detail_popover import MiniDetailPopover
+from comiccatcher.ui.components.paging_control import PagingControl
 
 logger = get_logger("ui.feed_browser")
 
@@ -277,26 +278,16 @@ class FeedBrowser(BaseBrowserView):
 
     def _setup_toolbar(self):
         s = UIConstants.scale
+        # Maintain fixed width for the left group to keep the center fixed.
+        # We use a broader width to accommodate combined Page + Thumbnail info in scrolled mode.
+        self.left_group.setFixedWidth(s(400))
+        
         self.status_label.setStyleSheet(f"font-size: {s(11)}px; font-weight: bold;")
         
-        self.btn_first = self.create_header_button("chevrons_left", "First Page")
-        self.btn_first.clicked.connect(lambda: self._on_nav_clicked("first"))
-        
-        self.btn_prev = self.create_header_button("chevron_left", "Previous Page")
-        self.btn_prev.clicked.connect(lambda: self._on_nav_clicked("previous"))
-        
-        self.page_label = QLabel("Page 1")
-        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.page_label.setStyleSheet(f"font-weight: bold; margin: 0 {UIConstants.SECTION_HEADER_SPACING}px;")
-        
-        self.btn_next = self.create_header_button("chevron_right", "Next Page")
-        self.btn_next.clicked.connect(lambda: self._on_nav_clicked("next"))
-        
-        self.btn_last = self.create_header_button("chevrons_right", "Last Page")
-        self.btn_last.clicked.connect(lambda: self._on_nav_clicked("last"))
-
-        self.paging_widgets = [self.btn_first, self.btn_prev, self.page_label, self.btn_next, self.btn_last]
-        for w in self.paging_widgets: w.setVisible(False)
+        # Paging Control
+        self.paging_control = PagingControl()
+        self.paging_control.nav_requested.connect(self._on_nav_clicked)
+        self.paging_control.setVisible(False)
         
         self.btn_mode_scrolled = self.create_header_button("scrolling", "Continuous Scrolling", checkable=True)
         self.btn_mode_paged = self.create_header_button("paging", "Standard Paging", checkable=True)
@@ -315,23 +306,20 @@ class FeedBrowser(BaseBrowserView):
         self.btn_facets.setMenu(self.facet_menu)
         self.btn_facets.setVisible(False)
 
-        self.header_layout.addStretch()
-        self.header_layout.addWidget(self.btn_first)
-        self.header_layout.addWidget(self.btn_prev)
-        self.header_layout.addWidget(self.page_label)
-        self.header_layout.addWidget(self.btn_next)
-        self.header_layout.addWidget(self.btn_last)
-        self.header_layout.addStretch()
+        # 5. Populate Layout Groups
+        # Center (Paging)
+        self.center_layout.addWidget(self.paging_control)
         
+        # Right (Modes and Actions)
         paging_mode_layout = QHBoxLayout()
         paging_mode_layout.setSpacing(0)
         paging_mode_layout.addWidget(self.btn_mode_scrolled)
         paging_mode_layout.addWidget(self.btn_mode_paged)
-        self.header_layout.addLayout(paging_mode_layout)
-        self.header_layout.addSpacing(UIConstants.TOOLBAR_GAP)
-        self.header_layout.addWidget(self.btn_labels)
-        self.header_layout.addWidget(self.btn_select)
-        self.header_layout.addWidget(self.btn_facets)
+        self.right_layout.addLayout(paging_mode_layout)
+        self.right_layout.addSpacing(UIConstants.TOOLBAR_GAP)
+        self.right_layout.addWidget(self.btn_labels)
+        self.right_layout.addWidget(self.btn_select)
+        self.right_layout.addWidget(self.btn_facets)
 
     def toggle_selection_mode(self, enabled: bool):
         super().toggle_selection_mode(enabled)
@@ -340,7 +328,7 @@ class FeedBrowser(BaseBrowserView):
         else:
             self.paged_view.toggle_selection_mode(enabled)
 
-    async def load_url(self, url: str, force_refresh: bool = False):
+    async def load_url(self, url: str, force_refresh: bool = False, is_paging: bool = False):
         # Prevent redundant reloads if we are already showing this URL in this feed context.
         # This preserves scroll position when returning from Detail views or switching tabs.
         is_same_url = (url == self._last_loaded_url)
@@ -376,6 +364,11 @@ class FeedBrowser(BaseBrowserView):
         
         self.loading_view.set_icon(server_pixmap)
         self.stack.setCurrentWidget(self.loading_view)
+        
+        # Hide paging/facets until new data arrives, UNLESS we are just paging
+        if not is_paging:
+            self._update_paging_toolbar(None)
+            self.btn_facets.setVisible(False)
         
         self._update_busy_state("initial_load", True)
         try:
@@ -431,25 +424,37 @@ class FeedBrowser(BaseBrowserView):
             self.paged_view.render(page)
             # Sync status label
             self._refresh_status_label()
+            
+            # Start background pre-fetching of adjacent and last pages
+            self._prefetch_adjacent_pages()
         else:
             self.stack.setCurrentWidget(self.scrolled_view)
             self.scrolled_view.render(page, page.pagination_template, page.is_offset_based, self._current_context_id, target_offset=target_offset)
 
-    def _update_paging_toolbar(self, page):
+    def _prefetch_adjacent_pages(self):
+        """Proactively fetch likely target pages into the OPDS cache."""
+        # Only prefetch for paged mode
+        if self._paging_mode != "paged": return
+        
+        # We target next, previous, and last as they are common user targets
+        for rel in ["next", "previous", "last"]:
+            url = self._paging_urls.get(rel)
+            if url:
+                # Fire and forget - the OPDSClient handles its own cache and deduplication
+                asyncio.create_task(self.opds_client.get_feed(url))
+
+    def _update_paging_toolbar(self, page: Optional[FeedPage]):
+        if not page:
+            self.paging_control.setVisible(False)
+            return
+
         has_paging = any(rel in self._paging_urls for rel in ["first", "previous", "next", "last"])
         show_paging = (self._paging_mode == "paged" and has_paging)
-        for w in self.paging_widgets: w.setVisible(show_paging)
+        self.paging_control.setVisible(show_paging)
         
         if show_paging:
-            page_text = f"Page {page.current_page}"
-            if page.total_pages:
-                page_text += f" (of {page.total_pages})"
-            self.page_label.setText(page_text)
-            
-            self.btn_first.setEnabled("first" in self._paging_urls)
-            self.btn_prev.setEnabled("previous" in self._paging_urls)
-            self.btn_next.setEnabled("next" in self._paging_urls)
-            self.btn_last.setEnabled("last" in self._paging_urls)
+            available_rels = set(self._paging_urls.keys())
+            self.paging_control.update_state(page.current_page, page.total_pages, available_rels)
 
     def _update_facets(self, page: FeedPage):
         """Populates the filter menu with server-provided facets."""
@@ -505,8 +510,17 @@ class FeedBrowser(BaseBrowserView):
     def _on_nav_clicked(self, rel):
         url = self._paging_urls.get(rel)
         if url:
-            title = self.page_label.text()
+            # Optimistically update the page label based on the relative direction
+            self._set_loading_page(rel)
+            
+            # Navigate
+            title = f"Page {self._last_page.current_page}" # Fallback
             self.navigate_requested.emit(url, title, True)
+
+    def _set_loading_page(self, rel):
+        """Immediately update UI to show which page we are attempting to load."""
+        if not self._last_page: return
+        self.paging_control.set_loading_state(rel, self._last_page.current_page, self._last_page.total_pages)
 
     def _on_cover_request(self, url):
         # Trigger async fetch via helper
@@ -560,6 +574,8 @@ class FeedBrowser(BaseBrowserView):
             self.paged_view.reapply_theme()
         if hasattr(self, 'scrolled_view'):
             self.scrolled_view.reapply_theme()
+        if hasattr(self, 'paging_control'):
+            self.paging_control.reapply_theme()
         self.refresh_icons()
 
     def refresh_icons(self):
@@ -581,15 +597,6 @@ class FeedBrowser(BaseBrowserView):
             }}
         """
         
-        # Collect nav buttons
-        nav_btns = []
-        for name in ['btn_first', 'btn_prev', 'btn_next', 'btn_last']:
-            if hasattr(self, name):
-                nav_btns.append(getattr(self, name))
-                
-        for btn in nav_btns:
-            btn.setStyleSheet(btn_style)
-            
         if hasattr(self, 'btn_mode_scrolled') and hasattr(self, 'btn_mode_paged'):
             # Mode buttons: Segments use accent for the active one, text_dim for inactive
             self.btn_mode_scrolled.setIcon(ThemeManager.get_icon("scrolling", "text_dim"))

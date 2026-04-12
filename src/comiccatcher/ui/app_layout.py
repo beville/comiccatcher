@@ -1047,7 +1047,7 @@ class MainWindow(QMainWindow):
         
         # Always use Feed Browser for any URL navigation (Browsing or Search Results)
         self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
-        asyncio.create_task(self.feed_browser.load_url(url))
+        asyncio.create_task(self.feed_browser.load_url(url, is_paging=replace))
         self.feed_browser.setFocus()
         
         self.update_header()

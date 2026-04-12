@@ -16,6 +16,8 @@ class ImageManager:
         self._memory_cache = {} # URL -> Base64 string
         self._created_subdirs = set()
         self._pending_tasks = {} # URL -> asyncio.Task
+        import asyncio
+        self._semaphore = asyncio.Semaphore(4) # Limit concurrent image downloads to prioritize feeds
 
     def get_image_sync(self, url: str):
         """Synchronously retrieves an image from cache (memory or disk)."""
@@ -101,40 +103,41 @@ class ImageManager:
             logger.error(f"Cannot fetch {url}: No APIClient provided.")
             return None
 
-        try:
-            logger.debug(f"Cache miss. Fetching image: {url}")
-            img_timeout = timeout or 15.0
-            resp = await client.get(url, timeout=img_timeout)
-            if resp.status_code == 200:
-                data = resp.content
-                
-                if max_dim:
-                    from PIL import Image
-                    import io
-                    try:
-                        with Image.open(io.BytesIO(data)) as img:
-                            if img.width > max_dim or img.height > max_dim:
-                                import asyncio
-                                data = await asyncio.to_thread(self._scale_image, data, max_dim)
-                    except Exception as e:
-                        logger.error(f"Error checking image dimensions for {url}: {e}")
+        async with self._semaphore:
+            try:
+                logger.debug(f"Cache miss. Fetching image: {url}")
+                img_timeout = timeout or 15.0
+                resp = await client.get(url, timeout=img_timeout)
+                if resp.status_code == 200:
+                    data = resp.content
+                    
+                    if max_dim:
+                        from PIL import Image
+                        import io
+                        try:
+                            with Image.open(io.BytesIO(data)) as img:
+                                if img.width > max_dim or img.height > max_dim:
+                                    import asyncio
+                                    data = await asyncio.to_thread(self._scale_image, data, max_dim)
+                        except Exception as e:
+                            logger.error(f"Error checking image dimensions for {url}: {e}")
 
-                with open(cache_path, "wb") as f:
-                    f.write(data)
+                    with open(cache_path, "wb") as f:
+                        f.write(data)
 
-                import base64
-                b64 = base64.b64encode(data).decode("utf-8")
-                self._memory_cache[url] = b64
-                return b64
-            else:
-                logger.warning(f"Failed to fetch image {url} - Status: {resp.status_code}")
-        except httpx.TimeoutException:
-            logger.warning(f"Timeout fetching image {url} ({img_timeout}s)")
-        except httpx.NetworkError as e:
-            logger.warning(f"Network error fetching image {url}: {e}")
-        except Exception as e:
-            import traceback
-            logger.error(f"Error fetching image {url}: {e}\n{traceback.format_exc()}")
+                    import base64
+                    b64 = base64.b64encode(data).decode("utf-8")
+                    self._memory_cache[url] = b64
+                    return b64
+                else:
+                    logger.warning(f"Failed to fetch image {url} - Status: {resp.status_code}")
+            except httpx.TimeoutException:
+                logger.warning(f"Timeout fetching image {url} ({img_timeout}s)")
+            except httpx.NetworkError as e:
+                logger.warning(f"Network error fetching image {url}: {e}")
+            except Exception as e:
+                import traceback
+                logger.error(f"Error fetching image {url}: {e}\n{traceback.format_exc()}")
 
         return None
 

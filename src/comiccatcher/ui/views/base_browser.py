@@ -38,8 +38,33 @@ class BaseBrowserView(QWidget):
         self.header_layout.setContentsMargins(UIConstants.LAYOUT_MARGIN_DEFAULT, 0, UIConstants.LAYOUT_MARGIN_DEFAULT, 0)
         self.layout.addWidget(self.header_widget)
 
+        # 1.1 Left Group (Status)
+        self.left_group = QWidget()
+        self.left_layout = QHBoxLayout(self.left_group)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.status_label = QLabel("")
-        self.header_layout.addWidget(self.status_label)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.left_layout.addWidget(self.status_label)
+        self.header_layout.addWidget(self.left_group)
+
+        # 1.2 Center Group (Navigation/Paging) - Stretches to keep centered
+        self.header_layout.addStretch(1)
+        
+        self.center_group = QWidget()
+        self.center_layout = QHBoxLayout(self.center_group)
+        self.center_layout.setContentsMargins(0, 0, 0, 0)
+        self.center_layout.setSpacing(0)
+        self.header_layout.addWidget(self.center_group)
+        
+        self.header_layout.addStretch(1)
+
+        # 1.3 Right Group (Actions/Modes) - Right aligned
+        self.right_group = QWidget()
+        self.right_layout = QHBoxLayout(self.right_group)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_layout.setSpacing(UIConstants.scale(10))
+        self.header_layout.addWidget(self.right_group)
 
         # 2. Status & Progress Area (Floating Overlay)
         self.status_area = QWidget(self)

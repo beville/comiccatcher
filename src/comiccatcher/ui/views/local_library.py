@@ -473,12 +473,16 @@ class LocalLibraryView(BaseBrowserView):
         self.btn_select = self.create_header_button("select", "Select Mode", checkable=True)
         self.btn_select.clicked.connect(self.toggle_selection_mode)
         
-        self.header_layout.addWidget(self.btn_up)
-        self.header_layout.addWidget(self.path_breadcrumb, 1)
+        # Populate Left
+        self.left_layout.insertWidget(0, self.btn_up)
+        self.left_layout.addWidget(self.path_breadcrumb, 1) # Expanding breadcrumb on left
+        
+        # Populate Center (Not used in Library, center is kept empty but centered)
         
         # Standard spacing between distinct elements
         GROUP_GAP = s(12)
         
+        # Populate Right
         # 1. Mode Selection (3 buttons)
         view_mode_layout = QHBoxLayout()
         view_mode_layout.setSpacing(0)
@@ -486,19 +490,19 @@ class LocalLibraryView(BaseBrowserView):
         view_mode_layout.addWidget(self.btn_view_file)
         view_mode_layout.addWidget(self.btn_view_grid)
         view_mode_layout.addWidget(self.btn_view_group)
-        self.header_layout.addLayout(view_mode_layout)
+        self.right_layout.addLayout(view_mode_layout)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 2. Group Selection (Solo Dropdown)
-        self.header_layout.addWidget(self.btn_group_by)
+        self.right_layout.addWidget(self.btn_group_by)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 3. Misc Group Toggle (Solo)
-        self.header_layout.addWidget(self.btn_group_misc)
+        self.right_layout.addWidget(self.btn_group_misc)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 4. Sort By (3 buttons)
         sort_by_layout = QHBoxLayout()
@@ -507,9 +511,9 @@ class LocalLibraryView(BaseBrowserView):
         sort_by_layout.addWidget(self.btn_sort_alpha)
         sort_by_layout.addWidget(self.btn_sort_date)
         sort_by_layout.addWidget(self.btn_sort_added)
-        self.header_layout.addLayout(sort_by_layout)
+        self.right_layout.addLayout(sort_by_layout)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 5. Sort Order (2 buttons)
         sort_dir_layout = QHBoxLayout()
@@ -517,14 +521,14 @@ class LocalLibraryView(BaseBrowserView):
         sort_dir_layout.setContentsMargins(0, 0, 0, 0)
         sort_dir_layout.addWidget(self.btn_sort_asc)
         sort_dir_layout.addWidget(self.btn_sort_desc)
-        self.header_layout.addLayout(sort_dir_layout)
+        self.right_layout.addLayout(sort_dir_layout)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 6. Label Toggle (Solo)
-        self.header_layout.addWidget(self.btn_labels)
+        self.right_layout.addWidget(self.btn_labels)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
         # 7. Focus (2 buttons)
         label_focus_layout = QHBoxLayout()
@@ -532,12 +536,12 @@ class LocalLibraryView(BaseBrowserView):
         label_focus_layout.setContentsMargins(0, 0, 0, 0)
         label_focus_layout.addWidget(self.btn_focus_series)
         label_focus_layout.addWidget(self.btn_focus_title)
-        self.header_layout.addLayout(label_focus_layout)
+        self.right_layout.addLayout(label_focus_layout)
         
-        self.header_layout.addSpacing(GROUP_GAP)
+        self.right_layout.addSpacing(GROUP_GAP)
         
-        self.header_layout.addWidget(self.btn_select)
-        self.header_layout.addWidget(self.btn_refresh)
+        self.right_layout.addWidget(self.btn_select)
+        self.right_layout.addWidget(self.btn_refresh)
         
         self._refresh_toolbar_states()
 

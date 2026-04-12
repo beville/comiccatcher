@@ -13,15 +13,14 @@
 
 ## Reader & UI
 
-* root:nav grids are ribbons in scrolled view for some reason
+* breadcrumbs with paging and facets
+* what do to with upper left label
+* feed tite/subtitle handling
 
 * keystrokes for feed and library
 
 * reader keystrokes and controls fixing
 
-* paging nav buttons should update before fetch??, also, make sure it's always centered in app.
-
-* check for any buttons, margins, sizes, font sizes, etc that aren't scaled
 
 ## deployment
 * upload to pypi account
@@ -37,19 +36,21 @@
 * Komga Latest Series See All, somehow goes to publications 
 * Codex - feed start thinks it's a publisher list 
 
-## Misc
+## Misc Lower
 
   
 * fix  "komgaandroid" URL hack in `feed_management.py`. (might be a bug report for komga)
 * refactoring opportunities:
-  * Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
-  * String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.
+  * check for any buttons, margins, sizes, font sizes, etc that aren't scaled
+  * centralize all style setting, and have everything respect themes
   * more consolidation/deduplcation of code
-  * less magic numbers
-  * maybe more  `QFontMetrics` to calculate offsets proportional to font size.
-  * better text eliding via QTextLayout, maybe
+  * less magic numbers every. Too man literal constants.
+  * maybe more  `QFontMetrics`etc to calculate offsets proportional to font size.
+  * better text eliding via QTextLayout, maybe, if not a performace hit
 
-## Future
+## Future Enhancments
 * OPDS 1.2 
 * Search/filter in library
 * Inifinite scroll even if no main axis data found
+* Handle OPDS Auth with special GUI
+* Different sized cards: small/medium/large
