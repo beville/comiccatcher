@@ -2,10 +2,6 @@
 
 ## Feed Stuff
 
-* opds facets at top level,  bettter parsing, 
-* should http requests specify language?
-   Accept-Language:  header
-
 * bug with scrolled feeds or codex giving wrong series count.
     manifests as extra cards at end of seroes scroll in codex (think codex is culprit when counts aren't updated when files are removed/added)
 
@@ -18,7 +14,9 @@
 
 ## Reader & UI
 
+
 * breadcrumbs with paging and facets
+   maybe when applying a facet, the trail shows the filter icon?
 
 * keystrokes for feed and library
 

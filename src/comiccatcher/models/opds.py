@@ -181,5 +181,5 @@ class OPDSFeed(BaseModel):
     publications: Optional[List[Publication]] = None
     navigation: Optional[List[Link]] = None
     groups: Optional[List[Group]] = None
-    facets: Optional[List[Dict[str, Any]]] = None
+    facets: Optional[List[Union[Group, Dict[str, Any]]]] = None
     authentication: Optional[List[Dict[str, Any]]] = None

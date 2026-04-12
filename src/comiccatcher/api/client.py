@@ -1,4 +1,5 @@
 import httpx
+import locale
 from typing import Optional, Dict, Any
 from comiccatcher.models.feed import FeedProfile
 from comiccatcher.config import NETWORK_TIMEOUT
@@ -12,7 +13,21 @@ class APIClient:
             follow_redirects=True
         )
         
+        self._setup_headers()
         self._setup_auth()
+
+    def _setup_headers(self):
+        """Sets up default headers, including system language."""
+        try:
+            # Try to get the system's preferred language/region (e.g. ('en_US', 'UTF-8'))
+            lang, encoding = locale.getlocale()
+            if lang:
+                # Standardize to RFC 2616 format: primary-subtag (e.g. en-US)
+                accept_lang = lang.replace('_', '-')
+                self.client.headers.update({"Accept-Language": f"{accept_lang}, *;q=0.5"})
+        except Exception:
+            # Fallback if locale detection fails
+            pass
 
     def _setup_auth(self):
         # Determine authentication method based on provided credentials

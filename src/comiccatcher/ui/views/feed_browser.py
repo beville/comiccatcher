@@ -476,18 +476,26 @@ class FeedBrowser(BaseBrowserView):
             if isinstance(facet, Group):
                 title = facet.metadata.title or "Filters"
                 # Create a submenu for this group
-                submenu = self.facet_menu.addMenu(title)
                 
-                if facet.navigation:
+                # OPDS 2.0 Facets use .links, while Groups often use .navigation or .publications
+                facet_links = facet.navigation or facet.links or []
+                
+                if facet_links:
                     has_content = True
-                    for link in facet.navigation:
+                    submenu = self.facet_menu.addMenu(title)
+                    for link in facet_links:
                         action = submenu.addAction(link.title or "Untitled")
                         # Connect directly to load_url via navigate_requested
                         full_url = urllib.parse.urljoin(self._last_loaded_url, link.href)
                         action.triggered.connect(lambda _, u=full_url, t=(link.title or "Untitled"): self.navigate_requested.emit(str(u), str(t), False))
             elif isinstance(facet, dict):
-                # Handle generic dictionary facets if any
-                title = facet.get("title", "Filter")
+                # Handle generic dictionary facets (OPDS 2.0 standard often uses a metadata object)
+                title = "Filter"
+                if "metadata" in facet and isinstance(facet["metadata"], dict):
+                    title = facet["metadata"].get("title", title)
+                elif "title" in facet:
+                    title = facet["title"]
+                
                 links = facet.get("links", [])
                 if links:
                     has_content = True
