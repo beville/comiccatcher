@@ -68,6 +68,39 @@ class LoadingOverlay(QWidget):
         theme = ThemeManager.get_current_theme_colors()
         self.setStyleSheet(f"background-color: {theme['bg_main']};")
 
+class ErrorOverlay(QWidget):
+    """An overlay shown when a feed fails to load."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        s = UIConstants.scale
+        self.layout.setSpacing(s(20))
+
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.layout.addWidget(self.icon_label)
+
+        self.message_label = QLabel("Failed to load feed")
+        self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.message_label.setWordWrap(True)
+        self.layout.addWidget(self.message_label)
+
+        self.reapply_theme()
+
+    def set_message(self, message: str):
+        self.message_label.setText(message)
+
+    def reapply_theme(self):
+        theme = ThemeManager.get_current_theme_colors()
+        s = UIConstants.scale
+        self.setStyleSheet(f"background-color: {theme['bg_main']};")
+        self.message_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_FEED_NAME_LARGE}px; color: {theme['text_main']};")
+        
+        # Use a large error icon
+        icon = ThemeManager.get_icon("close", "danger")
+        self.icon_label.setPixmap(icon.pixmap(s(64), s(64)))
+
 class FeedBrowser(BaseBrowserView):
     """
     Coordinator shell for feed browsing. 
@@ -107,11 +140,13 @@ class FeedBrowser(BaseBrowserView):
         self.paged_view = PagedFeedView(self.image_manager, self._collapsed_sections, self)
         self.scrolled_view = ScrolledFeedView(self.opds_client, self.image_manager, self._collapsed_sections, self)
         self.loading_view = LoadingOverlay(self)
+        self.error_view = ErrorOverlay(self)
         
         self.stack = QStackedWidget()
         self.stack.addWidget(self.paged_view)
         self.stack.addWidget(self.scrolled_view)
         self.stack.addWidget(self.loading_view)
+        self.stack.addWidget(self.error_view)
         self.add_content_widget(self.stack)
         
         # 3. Connect Signals
@@ -139,17 +174,10 @@ class FeedBrowser(BaseBrowserView):
 
         self.selection_layout.addWidget(self.btn_sel_download)
 
-        if self.download_manager:
-            self.download_manager.add_callback(self._on_downloads_updated)
-
     def _on_item_clicked(self, item, context):
         if self._selection_mode:
             return
         self.item_clicked.emit(item, context)
-
-    def _on_downloads_updated(self):
-        active = any(t.status in ("Downloading", "Pending") for t in self.download_manager.tasks.values())
-        self._update_busy_state("download_manager", active)
 
     def _update_selection_ui(self):
         """Updates selection bar label and button state."""
@@ -372,7 +400,9 @@ class FeedBrowser(BaseBrowserView):
                 QTimer.singleShot(200, self.ensure_visible_covers)
         except Exception as e:
             logger.error(f"FeedBrowser: Failed to load {url}: {e}")
-            self.status_label.setText(f"Error: {e}")
+            if ctx_id == self._current_context_id:
+                self.error_view.set_message(f"Failed to load feed:\n{e}")
+                self.stack.setCurrentWidget(self.error_view)
         finally:
             if ctx_id == self._current_context_id:
                 self._update_busy_state("initial_load", False)
@@ -522,6 +552,10 @@ class FeedBrowser(BaseBrowserView):
 
     def reapply_theme(self):
         super().reapply_theme()
+        if hasattr(self, 'loading_view'):
+            self.loading_view.reapply_theme()
+        if hasattr(self, 'error_view'):
+            self.error_view.reapply_theme()
         if hasattr(self, 'paged_view'):
             self.paged_view.reapply_theme()
         if hasattr(self, 'scrolled_view'):

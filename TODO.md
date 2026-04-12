@@ -13,13 +13,12 @@
 
 ## Reader & UI
 
+* reduce verical spacing in feedview between groups (make it the same as library spacing)
+
 * keystrokes for feed and library
 * reader keystrokes and controls fixing
 
-* better feedback on failed connection to server
-
 * paging nav buttons should update before fetch??
-
 
 ## deployment
 * upload to pypi account
