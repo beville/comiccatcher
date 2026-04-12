@@ -125,6 +125,7 @@ class UIConstants:
     _BASE_FONT_SIZE_SECTION_HEADER = 14
     _BASE_FONT_SIZE_CARD_LABEL = 13
     _BASE_FONT_SIZE_STATUS = 11
+    _BASE_FONT_SIZE_BOTTOM_BAR = 11
     _BASE_FONT_SIZE_DEBUG = 10
     _BASE_FONT_SIZE_DETAIL_TITLE = 24
     _BASE_FONT_SIZE_DETAIL_SUBTITLE = 18
@@ -205,6 +206,7 @@ class UIConstants:
     FONT_SIZE_SECTION_HEADER = _BASE_FONT_SIZE_SECTION_HEADER
     FONT_SIZE_CARD_LABEL = _BASE_FONT_SIZE_CARD_LABEL
     FONT_SIZE_STATUS = _BASE_FONT_SIZE_STATUS
+    FONT_SIZE_BOTTOM_BAR = _BASE_FONT_SIZE_BOTTOM_BAR
     FONT_SIZE_DEBUG = _BASE_FONT_SIZE_DEBUG
     FONT_SIZE_DETAIL_TITLE = _BASE_FONT_SIZE_DETAIL_TITLE
     FONT_SIZE_DETAIL_SUBTITLE = _BASE_FONT_SIZE_DETAIL_SUBTITLE
@@ -310,6 +312,16 @@ class UIConstants:
         return max(1, int(val * cls._scale_factor)) if val > 0 else 0
 
     @classmethod
+    @property
+    def BOTTOM_BAR_HEIGHT(cls) -> int:
+        from PyQt6.QtGui import QFont, QFontMetrics
+        font = QFont()
+        font.setPixelSize(cls.FONT_SIZE_BOTTOM_BAR)
+        metrics = QFontMetrics(font)
+        # Line spacing + 8px total vertical padding (scaled)
+        return metrics.lineSpacing() + cls.scale(8)
+
+    @classmethod
     def set_scale(cls, factor: float):
         cls._scale_factor = max(0.5, min(3.0, factor))
         cls.init_scale()
@@ -333,6 +345,7 @@ class UIConstants:
         cls.FONT_SIZE_SECTION_HEADER = cls.scale(cls._BASE_FONT_SIZE_SECTION_HEADER)
         cls.FONT_SIZE_CARD_LABEL = cls.scale(cls._BASE_FONT_SIZE_CARD_LABEL)
         cls.FONT_SIZE_STATUS = cls.scale(cls._BASE_FONT_SIZE_STATUS)
+        cls.FONT_SIZE_BOTTOM_BAR = cls.scale(cls._BASE_FONT_SIZE_BOTTOM_BAR)
         cls.FONT_SIZE_DEBUG = cls.scale(cls._BASE_FONT_SIZE_DEBUG)
         cls.FONT_SIZE_DETAIL_TITLE = cls.scale(cls._BASE_FONT_SIZE_DETAIL_TITLE)
         cls.FONT_SIZE_DETAIL_SUBTITLE = cls.scale(cls._BASE_FONT_SIZE_DETAIL_SUBTITLE)

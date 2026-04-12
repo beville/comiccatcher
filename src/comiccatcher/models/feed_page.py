@@ -58,6 +58,7 @@ class FeedSection(BaseModel):
 class FeedPage(BaseModel):
     """The entire state of a feed view."""
     title: str
+    subtitle: Optional[str] = None
     current_page: int = 1
     total_pages: Optional[int] = None
     sections: List[FeedSection] = []

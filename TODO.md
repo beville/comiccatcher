@@ -2,6 +2,10 @@
 
 ## Feed Stuff
 
+* opds facets at top level,  bettter parsing, 
+* should http requests specify language?
+   Accept-Language:  header
+
 * bug with scrolled feeds or codex giving wrong series count.
     manifests as extra cards at end of seroes scroll in codex (think codex is culprit when counts aren't updated when files are removed/added)
 
@@ -11,11 +15,10 @@
 * Bad OPDS pages to maybe work around:
    komga > Latest Series See All, somehow goes to publications (also probably a bug report for komga)
 
+
 ## Reader & UI
 
 * breadcrumbs with paging and facets
-* what do to with upper left label
-* feed tite/subtitle handling
 
 * keystrokes for feed and library
 

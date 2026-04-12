@@ -109,6 +109,19 @@ class BaseBrowserView(QWidget):
         self.selection_layout.addStretch()
         
         self.layout.addWidget(self.selection_bar)
+
+        # 5. Bottom Status Bar (VS Code style)
+        self.bottom_status_bar = QFrame()
+        self.bottom_status_bar.setObjectName("bottom_status_bar")
+        self.bottom_status_layout = QHBoxLayout(self.bottom_status_bar)
+        self.bottom_status_layout.setContentsMargins(UIConstants.LAYOUT_MARGIN_DEFAULT, 0, UIConstants.LAYOUT_MARGIN_DEFAULT, 0)
+        self.bottom_status_layout.setSpacing(0)
+        
+        self.bottom_status_label = QLabel("")
+        self.bottom_status_label.setObjectName("bottom_status_label")
+        self.bottom_status_layout.addWidget(self.bottom_status_label)
+        
+        self.layout.addWidget(self.bottom_status_bar)
         
         # Initial theme application
         QTimer.singleShot(0, self.reapply_theme)
@@ -159,6 +172,21 @@ class BaseBrowserView(QWidget):
             self.status_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_STATUS}px; font-weight: bold; color: {theme['text_dim']};")
             self.label_sel_count.setStyleSheet(f"font-weight: bold; font-size: {UIConstants.FONT_SIZE_STATUS}px; color: {theme['text_main']};")
             self.status_area.setStyleSheet(f"QWidget#status_overlay {{ background-color: {theme['bg_sidebar']}; border-bottom: {max(1, UIConstants.scale(1))}px solid {theme['border']}; }}")
+
+            self.bottom_status_bar.setFixedHeight(UIConstants.BOTTOM_BAR_HEIGHT)
+            self.bottom_status_bar.setStyleSheet(f"""
+                QFrame#bottom_status_bar {{ 
+                    background-color: {theme['bg_sidebar']}; 
+                    border-top: {max(1, UIConstants.scale(1))}px solid {theme['border']};
+                }}
+            """)
+            self.bottom_status_label.setStyleSheet(f"""
+                QLabel#bottom_status_label {{ 
+                    font-size: {UIConstants.FONT_SIZE_BOTTOM_BAR}px; 
+                    font-weight: bold; 
+                    color: {theme['text_dim']};
+                }}
+            """)
 
             for btn, icon_name in self._header_buttons.items():
                 btn.setIcon(ThemeManager.get_icon(icon_name))

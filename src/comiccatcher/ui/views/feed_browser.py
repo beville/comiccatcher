@@ -241,48 +241,53 @@ class FeedBrowser(BaseBrowserView):
         self._refresh_status_label()
 
     def _refresh_status_label(self):
-        # Priority 1: Heavy network ops (Initial Load or Background Book Downloads)
-        if "initial_load" in self._active_busy_sources:
-            self.status_label.setText("Fetching Feed...")
-            return
+        # 1. Update Top Label (Feed Title)
+        title_text = ""
+        if self._last_page:
+            title_text = self._last_page.title
+            if self._last_page.subtitle:
+                title_text = f"{title_text} | {self._last_page.subtitle}"
+        elif self.current_profile:
+            title_text = self.current_profile.name
             
-        if self.download_manager:
+        self.status_label.setText(title_text)
+
+        # 2. Update Bottom Label (Technical Stats & Progress)
+        status_parts = []
+        
+        # Priority info: Heavy network ops
+        if "initial_load" in self._active_busy_sources:
+            status_parts.append("Fetching Feed...")
+        elif self.download_manager:
             active_downloads = any(t.status in ("Downloading", "Pending") for t in self.download_manager.tasks.values())
             if active_downloads:
-                self.status_label.setText("Downloading Books...")
-                return
+                status_parts.append("Downloading Books...")
 
-        # Combine Scrolled View metrics with Thumbnail info
-        # ONLY if we are in scrolled mode
-        text = ""
-        if self._paging_mode == "scrolled":
-            text = self._last_scrolled_status
-        elif self._last_page:
-            # In paged mode, just show the page title as base text
-            text = self._last_page.title
+        # Scrolled View metrics (Items 1-X of Y)
+        # Only show if the feed actually supports pagination to avoid "Items 1-10 of 10" on small static lists
+        is_paginated = self._last_page.is_paginated if self._last_page else False
+        if self._paging_mode == "scrolled" and self._last_scrolled_status and is_paginated:
+            status_parts.append(self._last_scrolled_status)
         
-        # Add Thumbnail info if busy fetching them
+        # Thumbnail info
         if "covers" in self._active_busy_sources:
             count = len(self._pending_covers)
-            cover_text = f"Loading Thumbnails ({count})"
-            if text:
-                text = f"{text} | {cover_text}"
-            else:
-                text = cover_text
+            status_parts.append(f"Loading Thumbnails ({count})")
         
-        # Fallback if nothing specific is set but we are busy
-        if not text and len(self._active_busy_sources) > 0:
-            text = "Working..."
+        # Fallback if busy but no specific text
+        if not status_parts and len(self._active_busy_sources) > 0:
+            status_parts.append("Working...")
             
-        self.status_label.setText(text)
+        full_status = " | ".join(status_parts)
+        self.bottom_status_label.setText(full_status)
 
     def _setup_toolbar(self):
         s = UIConstants.scale
         # Maintain fixed width for the left group to keep the center fixed.
-        # We use a broader width to accommodate combined Page + Thumbnail info in scrolled mode.
+        # We use a broader width to accommodate the Feed Title + Subtitle.
         self.left_group.setFixedWidth(s(400))
         
-        self.status_label.setStyleSheet(f"font-size: {s(11)}px; font-weight: bold;")
+        self.status_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold;")
         
         # Paging Control
         self.paging_control = PagingControl()

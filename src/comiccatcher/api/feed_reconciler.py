@@ -19,8 +19,12 @@ class FeedReconciler:
     def reconcile(feed: OPDSFeed, base_url: str) -> FeedPage:
         # Fallback title logic: metadata.title -> top-level title -> "Feed"
         page_title = "Feed"
-        if feed.metadata and feed.metadata.title:
-            page_title = feed.metadata.title
+        page_subtitle = None
+        if feed.metadata:
+            if feed.metadata.title:
+                page_title = feed.metadata.title
+            if feed.metadata.subtitle:
+                page_subtitle = feed.metadata.subtitle
         elif hasattr(feed, 'title') and getattr(feed, 'title'):
             page_title = getattr(feed, 'title')
             
@@ -259,6 +263,7 @@ class FeedReconciler:
         # 8. Final Layout Assignment and Main Section Detection
         temp_page = FeedPage(
             title=page_title,
+            subtitle=page_subtitle,
             current_page=curr_page,
             total_pages=total_pages,
             sections=sections,
