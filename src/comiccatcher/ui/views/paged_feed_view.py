@@ -4,7 +4,7 @@ from typing import List, Optional, Set, Any
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QListView, QScrollArea, QSizePolicy, QPushButton, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent
 
 from comiccatcher.models.feed_page import FeedPage, FeedSection, SectionLayout, ItemType
 from comiccatcher.ui.theme_manager import UIConstants, ThemeManager
@@ -119,9 +119,11 @@ class PagedFeedView(BaseFeedSubView):
         model = FeedBrowserModel(items_per_page=len(section.items) or UIConstants.DEFAULT_PAGING_STRIDE)
         
         if layout == SectionLayout.RIBBON:
-            view = BaseCardRibbon(self, show_labels=self._show_labels)
+            view = BaseCardRibbon(self, show_labels=self._show_labels, reserve_progress_space=False)
             view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             view.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            # Register for unified wheel/cursor handling
+            view.viewport().installEventFilter(self)
         else:
             view = QListView()
             self.configure_list_view(view)
@@ -131,7 +133,6 @@ class PagedFeedView(BaseFeedSubView):
         delegate = FeedCardDelegate(view, self.image_manager, show_labels=self._show_labels)
         view.setModel(model)
         view.setItemDelegate(delegate)
-        view.viewport().installEventFilter(self)
         view._section_id = section.section_id
         self._section_views.append(view)
 
@@ -192,19 +193,6 @@ class PagedFeedView(BaseFeedSubView):
         # Emit global position for the popover
         global_pos = view.viewport().mapToGlobal(pos)
         self.mini_detail_requested.emit(item, global_pos, model)
-
-    def eventFilter(self, source, event):
-        """Dynamic cursor change when hovering over items."""
-        if event.type() == event.Type.MouseMove:
-            for view in self._section_views:
-                if source is view.viewport():
-                    index = view.indexAt(event.pos())
-                    if index.isValid():
-                        view.setCursor(Qt.CursorShape.PointingHandCursor)
-                    else:
-                        view.setCursor(Qt.CursorShape.ArrowCursor)
-                    break
-        return super().eventFilter(source, event)
 
     def _on_item_clicked(self, index, model):
         item = model.get_item(index.row())
@@ -295,5 +283,6 @@ class PagedFeedView(BaseFeedSubView):
         cols, row_h, sp = self.get_grid_layout_info(vp_width)
         rows = math.ceil(model.rowCount() / cols)
         
-        h = (rows * row_h) + UIConstants.VIEWPORT_MARGIN
+        # Grid height matches the exact content height
+        h = (rows * row_h)
         view.setFixedHeight(h)

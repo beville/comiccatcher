@@ -9,16 +9,19 @@
    See: https://www.lirtuel.be/v1/bundles.opds2
 
 * Bad OPDS pages to maybe work around:
-   komga > Latest Series See All, somehow goes to publications
+   komga > Latest Series See All, somehow goes to publications (also probably a bug report for komga)
 
 ## Reader & UI
 
-* reduce verical spacing in feedview between groups (make it the same as library spacing)
+* root:nav grids are ribbons in scrolled view for some reason
 
 * keystrokes for feed and library
+
 * reader keystrokes and controls fixing
 
-* paging nav buttons should update before fetch??
+* paging nav buttons should update before fetch??, also, make sure it's always centered in app.
+
+* check for any buttons, margins, sizes, font sizes, etc that aren't scaled
 
 ## deployment
 * upload to pypi account
@@ -27,9 +30,17 @@
 
 * windows and mac testing
 
+## bug reports:
+
+* Stump - not handling https links
+* Komga icon komgaandroid name is weird
+* Komga Latest Series See All, somehow goes to publications 
+* Codex - feed start thinks it's a publisher list 
+
 ## Misc
 
-* fix  "komgaandroid" URL hack in `feed_management.py`.
+  
+* fix  "komgaandroid" URL hack in `feed_management.py`. (might be a bug report for komga)
 * refactoring opportunities:
   * Duplicate Artist grouping, Date formatting, and File Size logic in `LocalDetailView`, `FeedDetailView`, and `MiniDetailPopover`.
   * String-based color replacement in `ThemeManager` and `BaseCardDelegate` instead of CSS/proper SVG manipulation.

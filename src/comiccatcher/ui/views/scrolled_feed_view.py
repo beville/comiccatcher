@@ -442,8 +442,10 @@ class ScrolledFeedView(BaseFeedSubView):
         # Outer scroll controls vertical movement; suppress the internal bar
         view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
         # Intercept wheel events so they drive the outer scrollbar
         view.viewport().installEventFilter(self)
+        
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         view.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
@@ -464,9 +466,11 @@ class ScrolledFeedView(BaseFeedSubView):
         return view
 
     def _make_ribbon(self, sec: FeedSection) -> BaseCardRibbon:
-        ribbon = BaseCardRibbon(self._vp, show_labels=self._show_labels)
+        ribbon = BaseCardRibbon(self._vp, show_labels=self._show_labels, reserve_progress_space=False)
         ribbon.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         ribbon.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # Register for unified wheel/cursor handling
+        ribbon.viewport().installEventFilter(self)
         rmodel = FeedBrowserModel(items_per_page=max(1, len(sec.items)))
         rmodel.set_items_for_page(1, sec.items)
         ribbon.setModel(rmodel)
@@ -500,25 +504,6 @@ class ScrolledFeedView(BaseFeedSubView):
         self._descs.clear()
 
     # ----------------------------------------------------------- event handling
-
-    def eventFilter(self, source, event):
-        """Forward vertical wheel events from grid viewports to the outer scrollbar."""
-        for view in self._grids.values():
-            if source is view.viewport():
-                t = event.type()
-                if t == QEvent.Type.Wheel:
-                    dy = event.angleDelta().y()
-                    if dy != 0:
-                        step = UIConstants.scale(20)
-                        self._sb.setValue(self._scroll_offset - (dy * step) // 120)
-                        return True
-                elif t == QEvent.Type.MouseMove:
-                    index = view.indexAt(event.pos())
-                    view.setCursor(
-                        Qt.CursorShape.PointingHandCursor if index.isValid()
-                        else Qt.CursorShape.ArrowCursor)
-                break
-        return super().eventFilter(source, event)
 
     def _on_header_toggled(self, sid: str, is_collapsed: bool):
         if is_collapsed:
