@@ -11,24 +11,19 @@
 * Bad OPDS pages to maybe work around:
    komga > Latest Series See All, somehow goes to publications (also probably a bug report for komga)
 
-
 ## Reader & UI
-
-* handle title click to home, when in search tab
-
-* switching from paged view to scrolled view is weird.
-  * trail, etc.  Need to define behavior clearly
 
 * keystrokes for feed and library
 
 * reader keystrokes and controls fixing
 
-
 ## deployment
-* set up github actions for
-	pypi package and deployment
 
-* upload to pypi account
+* set up github actions for
+  * pypi package and deployment
+  * appimage creation
+  * standalone windows exe
+  * unsigned macos app 
 
 ## testing
 

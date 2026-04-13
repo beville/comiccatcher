@@ -637,7 +637,18 @@ class MainWindow(QMainWindow):
 
     def _on_server_pill_clicked(self, event=None):
         """Returns to server root using either 'start' link or history index 0."""
-        # 1. Attempt to find 'start' link in current feed metadata
+        fid = self.current_feed_id
+        if not fid: return
+
+        # 1. If we are on search tab, reset it and switch back to feed browser
+        if self.active_tab == "search":
+            # Clear search history stack for this feed
+            self.search_histories[fid] = []
+            self.search_indices[fid] = -1
+            # Force switch to feed tab (without trigger navigation because we'll do it below)
+            self._on_tab_clicked("feed", navigate=False)
+
+        # 2. Attempt to find 'start' link in current feed metadata (if any)
         start_url = None
         if hasattr(self.feed_browser, '_last_raw_feed') and self.feed_browser._last_raw_feed:
             feed = self.feed_browser._last_raw_feed
@@ -648,23 +659,23 @@ class MainWindow(QMainWindow):
                     start_url = urllib.parse.urljoin(self.feed_browser._last_loaded_url, link.href)
                     break
         
-        # 2. Compare with 'Home' (history index 0)
-        hist, idx = self.get_current_history()
-        home_url = hist[0]["url"] if hist else None
+        # 3. Get the feed-browser history (always use feed stack for Home comparison)
+        hist = self.feed_histories.get(fid, [])
+        home_url = hist[0]["url"] if hist and "url" in hist[0] else None
         
         def normalize(u):
             if not u: return None
             return u.rstrip('/')
             
-        # 3. Decision: 
+        # 4. Decision: 
         # If start_url found AND it's different from our current home_url, navigate to it.
         # Otherwise, just jump back to history index 0.
         if start_url and normalize(start_url) != normalize(home_url):
             logger.info(f"Pill click: Navigating to server 'start' link: {start_url}")
-            self.on_navigate_to_url(start_url, title="Home")
+            self.on_navigate_to_url(start_url, title="Home", force_refresh=True)
         else:
-            logger.info("Pill click: Jumping to history index 0 (Home).")
-            self.on_jump_to_history(0)
+            logger.info("Pill click: Jumping to history index 0 (Home) with reload.")
+            self.on_jump_to_history(0, force_refresh=True)
 
     def get_current_history(self):
         fid = self.current_feed_id
@@ -1053,7 +1064,7 @@ class MainWindow(QMainWindow):
         self.config_manager.update_feed(f)
         self.search_root_view.update_data(f.search_history, f.pinned_searches)
 
-    def on_navigate_to_url(self, url, title="Loading...", replace=False, icon=None, keep_title=False, feed_id=None):
+    def on_navigate_to_url(self, url, title="Loading...", replace=False, icon=None, keep_title=False, feed_id=None, force_refresh=False):
         hist, idx = self.get_current_history()
         if replace and idx >= 0:
             hist[idx]["url"] = url
@@ -1079,7 +1090,7 @@ class MainWindow(QMainWindow):
         
         # Always use Feed Browser for any URL navigation (Browsing or Search Results)
         self.content_stack.setCurrentIndex(ViewIndex.FEED_BROWSER)
-        asyncio.create_task(self.feed_browser.load_url(url, is_paging=replace))
+        asyncio.create_task(self.feed_browser.load_url(url, is_paging=replace, force_refresh=force_refresh))
         self.feed_browser.setFocus()
         
         self.update_header()
@@ -1109,7 +1120,7 @@ class MainWindow(QMainWindow):
         self.update_header()
         self.feed_detail_view.load_publication(pub, self_url, self.api_client, self.opds_client, self.image_manager, context_pubs=context_pubs)
 
-    def on_jump_to_history(self, index):
+    def on_jump_to_history(self, index, force_refresh=False):
         if index < 0:
             return
             
@@ -1133,7 +1144,7 @@ class MainWindow(QMainWindow):
         self.update_header()
         
         if entry["type"] == "browser":
-            asyncio.create_task(self.feed_browser.load_url(entry["url"]))
+            asyncio.create_task(self.feed_browser.load_url(entry["url"], force_refresh=force_refresh))
             self.feed_browser.setFocus()
         elif entry["type"] == "search_root":
             if self.api_client:
