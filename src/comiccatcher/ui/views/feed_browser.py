@@ -285,9 +285,12 @@ class FeedBrowser(BaseBrowserView):
 
     def _setup_toolbar(self):
         s = UIConstants.scale
-        # Maintain fixed width for the left group to keep the center fixed.
+        # Maintain fixed width for the left and right groups to keep the center centered.
         # We use a broader width to accommodate the Feed Title + Subtitle.
         self.left_group.setFixedWidth(s(400))
+        self.right_group.setFixedWidth(s(400))
+        self.right_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.center_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         self.status_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold;")
         
@@ -412,10 +415,13 @@ class FeedBrowser(BaseBrowserView):
             if ctx_id == self._current_context_id:
                 self._update_busy_state("initial_load", False)
 
-    def _render_page(self, page: FeedPage, raw_feed, target_offset: Optional[int] = None):
+    def _render_page(self, page: FeedPage, raw_feed, target_offset: Optional[int] = None, target_item_index: Optional[int] = None):
         self._update_paging_toolbar(page)
         self._update_facets(page)
         
+        # Sync the breadcrumb title (e.g., adding/removing Page suffix based on mode)
+        self._sync_history_title(self._paging_mode, page.current_page)
+
         # Decide mode
         mode = self._paging_mode
         if self.current_profile:
@@ -441,7 +447,7 @@ class FeedBrowser(BaseBrowserView):
             self._prefetch_adjacent_pages()
         else:
             self.stack.setCurrentWidget(self.scrolled_view)
-            self.scrolled_view.render(page, page.pagination_template, page.is_offset_based, self._current_context_id, target_offset=target_offset)
+            self.scrolled_view.render(page, page.pagination_template, page.is_offset_based, self._current_context_id, target_offset=target_offset, target_item_index=target_item_index)
             
         self.page_loaded.emit()
 
@@ -519,15 +525,62 @@ class FeedBrowser(BaseBrowserView):
 
         self.btn_facets.setVisible(has_content)
 
+    def _sync_history_title(self, mode: str, page_number: int):
+        """Updates the breadcrumb title in AppLayout to match the current mode and page."""
+        base_title = self.get_current_title()
+        base_title = re.sub(r" \(Page \d+\)$", "", base_title)
+        
+        new_title = base_title
+        if mode == "paged" and page_number > 1:
+            new_title = f"{base_title} (Page {page_number})"
+            
+        # Update AppLayout
+        p = self.parent()
+        while p and not hasattr(p, 'update_current_history_title'):
+            p = p.parent()
+        if p:
+            p.update_current_history_title(new_title)
+
     def _on_paging_mode_changed(self, mode):
+        # Determine parity targets before switching
+        target_item_index = None
+        target_page_index = None
+        
+        if self._paging_mode == "paged" and mode == "scrolled" and self._last_page:
+            # Paged -> Scrolled: Calculate the start index of the current page
+            ipp = self._last_page.feed_items_per_page
+            if not ipp and self._last_page.main_section:
+                ipp = self._last_page.main_section.items_per_page
+            
+            ipp = ipp or 20 # Fallback
+            target_item_index = (self._last_page.current_page - 1) * ipp
+        elif self._paging_mode == "scrolled" and mode == "paged":
+            # Scrolled -> Paged: Determine which page is visible
+            target_page_index = self.scrolled_view.get_first_visible_page_index()
+
         self._paging_mode = mode
         if self.current_profile:
             self.current_profile.paging_mode = mode
             if self.config_manager: self.config_manager.update_feed(self.current_profile)
         
-        # Re-render the existing data in the new mode without a network hit
+        # Re-render or Load
         if self._last_page:
-            self._render_page(self._last_page, self._last_raw_feed)
+            if target_page_index and target_page_index != self._last_page.current_page:
+                # We need to officially "load" the new page to get its metadata/links
+                if self.scrolled_view._pagination_template:
+                    val = target_page_index
+                    if self.scrolled_view._pagination_base_number == 0:
+                        val = target_page_index - 1
+                    target_url = self.scrolled_view._pagination_template.replace("{page}", str(val))
+                    asyncio.create_task(self.load_url(target_url, is_paging=True))
+                else:
+                    self._render_page(self._last_page, self._last_raw_feed)
+            else:
+                self._render_page(self._last_page, self._last_raw_feed, target_item_index=target_item_index)
+
+        # Sync the title (removes/adds Page suffix)
+        curr_p = self._last_page.current_page if self._last_page else 1
+        self._sync_history_title(mode, curr_p)
 
     def get_current_title(self) -> str:
         """Retrieves the current breadcrumb title from the parent app layout."""

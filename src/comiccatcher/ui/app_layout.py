@@ -1084,6 +1084,14 @@ class MainWindow(QMainWindow):
         
         self.update_header()
 
+    def update_current_history_title(self, new_title: str):
+        """Updates the title of the current history entry and refreshes the breadcrumbs."""
+        hist, idx = self.get_current_history()
+        if idx >= 0:
+            hist[idx]["title"] = new_title
+            self.set_current_history(hist, idx)
+            self.update_header()
+
     def on_open_detail(self, pub, self_url, context_pubs=None):
         hist, idx = self.get_current_history()
         if idx < len(hist) - 1:

@@ -14,9 +14,10 @@
 
 ## Reader & UI
 
+* handle title click to home, when in search tab
 
-* breadcrumbs with paging and facets
-   maybe when applying a facet, the trail shows the filter icon?
+* switching from paged view to scrolled view is weird.
+  * trail, etc.  Need to define behavior clearly
 
 * keystrokes for feed and library
 
@@ -24,6 +25,9 @@
 
 
 ## deployment
+* set up github actions for
+	pypi package and deployment
+
 * upload to pypi account
 
 ## testing

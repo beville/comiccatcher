@@ -107,6 +107,7 @@ class ScrolledFeedView(BaseFeedSubView):
         self._scroll_offset: int = 0
         self._total_height:  int = 0
         self._descs: List[_SectionDesc] = []
+        self._descs_dict: Dict[str, _SectionDesc] = {}
 
         # Per-section widget pools (children of _vp)
         self._headers: Dict[str, SectionHeader]   = {}
@@ -143,7 +144,7 @@ class ScrolledFeedView(BaseFeedSubView):
 
     # ---------------------------------------------------------------- public --
 
-    def render(self, page: FeedPage, template: Optional[str], is_offset: bool, ctx_id: float, target_offset: Optional[int] = None):
+    def render(self, page: FeedPage, template: Optional[str], is_offset: bool, ctx_id: float, target_offset: Optional[int] = None, target_item_index: Optional[int] = None):
         self._current_context_id = ctx_id
         self._pagination_template = template
         self._pagination_base_number = page.pagination_base_number
@@ -176,7 +177,15 @@ class ScrolledFeedView(BaseFeedSubView):
 
         # Reset or restore scroll
         new_offset = target_offset if target_offset is not None else 0
-        # Sanity check: if the new content is much shorter than the old offset, reset to 1
+        
+        if target_item_index is not None and self._main_grid_sid in self._descs_dict:
+            desc = self._descs_dict[self._main_grid_sid]
+            vp_w = max(1, self._vp.width())
+            cols, row_h, sp = self.get_grid_layout_info(vp_w)
+            row = target_item_index // cols
+            new_offset = desc.y + desc.header_h + (row * row_h)
+
+        # Sanity check: if the new content is much shorter than the old offset, reset to 0
         if new_offset > self._total_height - self._vp.height():
             new_offset = 0
 
@@ -193,6 +202,27 @@ class ScrolledFeedView(BaseFeedSubView):
                 m.set_items_for_page(main.current_page, main.items)
 
         self._update_status()
+
+    def get_first_visible_page_index(self) -> int:
+        """Calculates which page is currently at the top of the viewport."""
+        model = self._models.get(self._main_grid_sid)
+        view  = self._grids.get(self._main_grid_sid)
+        if not (model and view and view.isVisible()):
+            return 1
+            
+        vp_w = view.viewport().width()
+        cols, row_h, sp = self.get_grid_layout_info(vp_w)
+        
+        # Try to find the first visible index
+        fi = view.indexAt(QPoint(UIConstants.VIEWPORT_MARGIN, UIConstants.VIEWPORT_MARGIN))
+        if fi.isValid():
+            first = fi.row()
+        else:
+            inner = view.verticalScrollBar().value()
+            first = max(0, (inner // row_h) * cols)
+            
+        ipp = self._items_per_page
+        return (first // ipp) + 1
 
     def set_show_labels(self, show: bool):
         self._show_labels = show
@@ -268,8 +298,12 @@ class ScrolledFeedView(BaseFeedSubView):
         # Adjust headers for scrollbar
         self.update_header_margins(self._sb)
 
+        self._descs_dict.clear()
         y = 0
         for desc in self._descs:
+            sid = desc.section.section_id
+            self._descs_dict[sid] = desc
+            
             desc.y        = y
             desc.header_h = header_h
             if desc.section.section_id in self._collapsed_sections:
