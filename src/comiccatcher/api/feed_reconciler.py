@@ -192,7 +192,7 @@ class FeedReconciler:
                 sec_id = (m.identifier if m else None) or f"pubs_{logical_id}"
                 
                 sections.append(FeedSection(
-                    title="Items",
+                    title="Publications",
                     section_id=sec_id,
                     items=pub_items,
                     total_items=len(pub_items),

@@ -13,7 +13,7 @@ class BaseFeedSubView(QWidget):
     Centralizes shared UI configuration, signals, and context gathering logic.
     """
     item_clicked = pyqtSignal(FeedItem, list) # item, context_pubs
-    navigate_requested = pyqtSignal(str, str, bool) # url, title, replace
+    navigate_requested = pyqtSignal(str, str, bool, str) # url, title, replace, icon_name
     cover_request_needed = pyqtSignal(str)
     selection_changed = pyqtSignal()
     mini_detail_requested = pyqtSignal(object, object, object) # item, global_pos, model

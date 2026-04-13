@@ -404,7 +404,7 @@ class ScrolledFeedView(BaseFeedSubView):
                 
                 btn_all = browser.create_action_button(
                     label,
-                    lambda _, u=sec.self_url, t=sec.title: self.navigate_requested.emit(u, t, False)
+                    lambda _, u=sec.self_url, t=sec.title: self.navigate_requested.emit(u, t, False, "")
                 )
                 action_widget = btn_all
 

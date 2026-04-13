@@ -151,7 +151,7 @@ class PagedFeedView(BaseFeedSubView):
                 
             btn_all = browser.create_action_button(
                 label,
-                lambda _, u=section.self_url, t=section.title: self.navigate_requested.emit(u, t, False)
+                lambda _, u=section.self_url, t=section.title: self.navigate_requested.emit(u, t, False, "")
             )
             action_widget = btn_all
 

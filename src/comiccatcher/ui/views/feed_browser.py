@@ -108,9 +108,10 @@ class FeedBrowser(BaseBrowserView):
     Switches between PagedFeedView and ScrolledFeedView based on content and settings.
     """
     item_clicked = pyqtSignal(FeedItem, list)
-    navigate_requested = pyqtSignal(str, str, bool) # url, title, replace
+    navigate_requested = pyqtSignal(str, str, bool, str) # url, title, replace, icon_name
     download_requested = pyqtSignal(object, str) # pub, download_url
     selection_changed = pyqtSignal()
+    page_loaded = pyqtSignal()
 
 
     def __init__(self, opds_client: OPDS2Client, image_manager: ImageManager, config_manager=None, download_manager=None, parent=None, show_labels=True):
@@ -370,6 +371,11 @@ class FeedBrowser(BaseBrowserView):
         self.loading_view.set_icon(server_pixmap)
         self.stack.setCurrentWidget(self.loading_view)
         
+        # Clear previous page data to prevent title/status bleed during load
+        if not is_paging:
+            self._last_page = None
+            self.page_loaded.emit() # Refresh header immediately to clear old title
+        
         # Hide paging/facets until new data arrives, UNLESS we are just paging
         if not is_paging:
             self._update_paging_toolbar(None)
@@ -435,6 +441,8 @@ class FeedBrowser(BaseBrowserView):
         else:
             self.stack.setCurrentWidget(self.scrolled_view)
             self.scrolled_view.render(page, page.pagination_template, page.is_offset_based, self._current_context_id, target_offset=target_offset)
+            
+        self.page_loaded.emit()
 
     def _prefetch_adjacent_pages(self):
         """Proactively fetch likely target pages into the OPDS cache."""
@@ -487,7 +495,7 @@ class FeedBrowser(BaseBrowserView):
                         action = submenu.addAction(link.title or "Untitled")
                         # Connect directly to load_url via navigate_requested
                         full_url = urllib.parse.urljoin(self._last_loaded_url, link.href)
-                        action.triggered.connect(lambda _, u=full_url, t=(link.title or "Untitled"): self.navigate_requested.emit(str(u), str(t), False))
+                        action.triggered.connect(lambda _, u=full_url, t=(link.title or "Untitled"): self.navigate_requested.emit(str(u), str(t), False, "filter"))
             elif isinstance(facet, dict):
                 # Handle generic dictionary facets (OPDS 2.0 standard often uses a metadata object)
                 title = "Filter"
@@ -506,7 +514,7 @@ class FeedBrowser(BaseBrowserView):
                         if l_href:
                             full_url = urllib.parse.urljoin(self._last_loaded_url, l_href)
                             action = submenu.addAction(l_title)
-                            action.triggered.connect(lambda _, u=full_url, t=l_title: self.navigate_requested.emit(str(u), str(t), False))
+                            action.triggered.connect(lambda _, u=full_url, t=l_title: self.navigate_requested.emit(str(u), str(t), False, "filter"))
 
         self.btn_facets.setVisible(has_content)
 
@@ -528,7 +536,7 @@ class FeedBrowser(BaseBrowserView):
             
             # Navigate
             title = f"Page {self._last_page.current_page}" # Fallback
-            self.navigate_requested.emit(url, title, True)
+            self.navigate_requested.emit(url, title, True, "")
 
     def _set_loading_page(self, rel):
         """Immediately update UI to show which page we are attempting to load."""

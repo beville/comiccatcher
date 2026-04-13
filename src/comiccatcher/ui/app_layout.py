@@ -373,6 +373,7 @@ class MainWindow(QMainWindow):
         self.feed_browser.item_clicked.connect(self._on_feed_item_clicked)
         self.feed_browser.navigate_requested.connect(self.on_navigate_to_url)
         self.feed_browser.download_requested.connect(self.on_start_download)
+        self.feed_browser.page_loaded.connect(self.update_header)
         self.content_stack.addWidget(self.feed_browser) # Index 8 (Match ViewIndex)
 
         self.feed_list_view.icon_loaded.connect(self._on_feed_icon_loaded)
@@ -444,7 +445,7 @@ class MainWindow(QMainWindow):
         
         # 5. Server Identity
         # Use a large, clear font for the server name
-        font_size = s(20)
+        font_size = s(16)
         font = self.server_name_label.font()
         font.setPixelSize(font_size)
         font.setBold(True)
@@ -810,7 +811,23 @@ class MainWindow(QMainWindow):
         if self.api_client:
             feed = self.api_client.profile
             s = UIConstants.scale
-            self.server_name_label.setText(feed.name)
+            
+            display_name = feed.name
+            
+            # Try to get the active feed title from the browser
+            browser_title = ""
+            if self.feed_browser._last_page:
+                browser_title = self.feed_browser._last_page.title
+                if self.feed_browser._last_page.subtitle:
+                    browser_title = f"{browser_title} | {self.feed_browser._last_page.subtitle}"
+            
+            if browser_title and browser_title != feed.name:
+                # Use Rich Text to make the appended info lighter
+                full_text = f"{feed.name} <span style='font-weight: normal; opacity: 0.7;'> : {browser_title}</span>"
+                self.server_name_label.setText(full_text)
+            else:
+                self.server_name_label.setText(feed.name)
+                
             icon_pixmap = getattr(feed, "_cached_icon", None)
             icon_size = s(24)
             if icon_pixmap:
@@ -860,10 +877,20 @@ class MainWindow(QMainWindow):
             if i == 0: continue
             
             title = entry.get("title", "...")
+            icon_name = entry.get("icon")
+            
             item_widget = QWidget()
             item_layout = QHBoxLayout(item_widget)
             item_layout.setContentsMargins(0, 0, 0, 0)
             item_layout.setSpacing(s(5))
+            
+            # Prepend icon if available
+            if icon_name:
+                icon_label = QLabel()
+                # Use text_dim for inactive, accent or default for active is handled by button/label style
+                icon = ThemeManager.get_icon(icon_name)
+                icon_label.setPixmap(icon.pixmap(s(16), s(16)))
+                item_layout.addWidget(icon_label)
             
             if i == idx:
                 label = QLabel(title)
@@ -990,7 +1017,7 @@ class MainWindow(QMainWindow):
                 separator = "&" if "?" in search_link else "?"
                 search_url = f"{search_link}{separator}query={safe_query}"
                 
-            self.on_navigate_to_url(search_url, title=f"Search: '{query}'")
+            self.on_navigate_to_url(search_url, title=f"Search: '{query}'", icon="search")
             
         except Exception as e:
             QMessageBox.warning(self, "Search Error", f"Could not perform search: {e}")
@@ -1026,20 +1053,24 @@ class MainWindow(QMainWindow):
         self.config_manager.update_feed(f)
         self.search_root_view.update_data(f.search_history, f.pinned_searches)
 
-    def on_navigate_to_url(self, url, title="Loading...", replace=False, keep_title=False, icon=None, feed_id=None):
+    def on_navigate_to_url(self, url, title="Loading...", replace=False, icon=None, keep_title=False, feed_id=None):
         hist, idx = self.get_current_history()
         if replace and idx >= 0:
             hist[idx]["url"] = url
+            # Update icon if provided
+            if icon:
+                hist[idx]["icon"] = icon
             if not keep_title:
                 hist[idx]["title"] = title
         else:
             if idx < len(hist) - 1:
                 hist = hist[:idx + 1]
             hist.append({
-                "type": "browser", 
-                "title": title, 
-                "url": url, 
-                "offset": 0
+                "type": "browser",
+                "title": title,
+                "url": url,
+                "offset": 0,
+                "icon": icon
             })
             idx = len(hist) - 1
             
