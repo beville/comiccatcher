@@ -125,6 +125,11 @@ class ScrolledFeedView(BaseFeedSubView):
         self._active_sparse_tasks: Dict[str, asyncio.Task] = {}
         self._pending_page_requests: List[int] = []
         self._main_grid_sid: Optional[str] = None
+        
+        self._next_url: Optional[str] = None
+        self._is_infinite_grid: bool = False
+        self._is_infinite_sections: bool = False
+        self._is_fetching_next: bool = False
 
         # Timers
         self._status_timer = QTimer()
@@ -159,6 +164,24 @@ class ScrolledFeedView(BaseFeedSubView):
 
         self._main_grid_sid  = main.section_id if main else None
         
+        # Infinite scroll setup
+        self._next_url = page.next_url
+        self._is_infinite_grid = False
+        self._is_infinite_sections = False
+        self._is_fetching_next = False
+        
+        if main and main.total_items is None and self._next_url:
+            self._is_infinite_grid = True
+            page.sections = [s for s in page.sections if s != main] + [main]
+            logger.debug(f"ScrolledFeedView: 'Infinite Grid' Mode enabled. Reordered main section to end.")
+        elif not main and self._next_url:
+            self._is_infinite_sections = True
+            logger.debug(f"ScrolledFeedView: 'Infinite Sections' Mode enabled.")
+        elif main and main.total_items is not None:
+            logger.debug(f"ScrolledFeedView: 'Virtualized Grid' Mode enabled.")
+        else:
+            logger.debug(f"ScrolledFeedView: Static Mode enabled (no pagination).")
+
         # Robust items_per_page detection:
         # 1. Use metadata if the reconciler found it
         # 2. Use the actual count of the first page we just received
@@ -202,6 +225,9 @@ class ScrolledFeedView(BaseFeedSubView):
                 m.set_items_for_page(main.current_page, main.items)
 
         self._update_status()
+        
+        # Calibrate actual grid heights and trigger initial pre-fetch check
+        QTimer.singleShot(50, self._calibrate_grid_heights)
 
     def get_first_visible_page_index(self) -> int:
         """Calculates which page is currently at the top of the viewport."""
@@ -291,6 +317,16 @@ class ScrolledFeedView(BaseFeedSubView):
         if not self._debounce_timer.isActive():
             self._debounce_timer.start()
 
+        self._check_infinite_scroll()
+
+    def _check_infinite_scroll(self):
+        # Infinite scroll pre-fetch detection
+        if (self._is_infinite_grid or self._is_infinite_sections) and self._next_url and not self._is_fetching_next:
+            # Prefetch threshold: roughly 2 screens of content ahead
+            threshold = max(UIConstants.scale(1500), self._vp.height() * 2)
+            if self._total_height - (self._scroll_offset + self._vp.height()) < threshold:
+                self._fetch_next_page()
+
     def _recompute_positions(self):
         vp_w     = max(1, self._vp.width())
         header_h = UIConstants.SECTION_HEADER_HEIGHT
@@ -310,7 +346,12 @@ class ScrolledFeedView(BaseFeedSubView):
                 desc.content_h = 0
             elif desc.is_grid:
                 cols, row_h, sp = self.get_grid_layout_info(vp_w)
-                total = desc.section.total_items or len(desc.section.items)
+                model = self._models.get(sid)
+                if model:
+                    total = model.rowCount()
+                else:
+                    total = desc.section.total_items or len(desc.section.items)
+                    
                 if total == 0:
                     desc.content_h = 0
                 else:
@@ -410,6 +451,8 @@ class ScrolledFeedView(BaseFeedSubView):
             self._total_height = y
             self._update_scrollbar()
             self._update_layout()
+            
+        self._check_infinite_scroll()
 
     # ---------------------------------------------------- widget construction --
 
@@ -770,6 +813,50 @@ class ScrolledFeedView(BaseFeedSubView):
                     model.set_items_for_page(page_idx, main.items)
         except Exception as e:
             logger.error(f"Fetch failed: {e}")
+
+    def _fetch_next_page(self):
+        self._is_fetching_next = True
+        self.busy_updated.emit(True)
+        asyncio.create_task(self._do_fetch_next_page(self._current_context_id))
+
+    async def _do_fetch_next_page(self, ctx_id: float):
+        try:
+            feed = await self.opds_client.get_feed(self._next_url)
+            if ctx_id != self._current_context_id:
+                return
+            
+            # Reconcile
+            page = FeedReconciler.reconcile(feed, self._next_url)
+            self._next_url = page.next_url
+
+            if self._is_infinite_grid:
+                # Scenario 1: append items to the main section model
+                main = page.main_section
+                if main and main.items:
+                    model = self._models.get(self._main_grid_sid)
+                    if model:
+                        model.append_items(main.items)
+                        # We must also trigger layout recalculation
+                        self._recompute_positions()
+                        self._update_scrollbar()
+                        self._update_layout()
+                        QTimer.singleShot(50, self._calibrate_grid_heights)
+
+            elif self._is_infinite_sections:
+                # Scenario 2: append new sections
+                if page.sections:
+                    self._build_section_widgets(page.sections)
+                    self._recompute_positions()
+                    self._update_scrollbar()
+                    self._update_layout()
+                    QTimer.singleShot(50, self._calibrate_grid_heights)
+
+        except Exception as e:
+            logger.error(f"Failed to fetch next infinite page: {e}")
+        finally:
+            if ctx_id == self._current_context_id:
+                self._is_fetching_next = False
+                self.busy_updated.emit(False)
 
     def _on_task_done(self, task, key):
         try:

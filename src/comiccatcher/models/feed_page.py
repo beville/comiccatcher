@@ -61,6 +61,7 @@ class FeedPage(BaseModel):
     subtitle: Optional[str] = None
     current_page: int = 1
     total_pages: Optional[int] = None
+    next_url: Optional[str] = None
     sections: List[FeedSection] = []
     facets: List[Any] = [] # List of Group objects or dicts for filters
 

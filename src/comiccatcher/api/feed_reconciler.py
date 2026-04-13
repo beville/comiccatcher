@@ -283,6 +283,7 @@ class FeedReconciler:
             subtitle=page_subtitle,
             current_page=curr_page,
             total_pages=total_pages,
+            next_url=root_next,
             sections=sections,
             facets=facets,
             is_paginated=is_paginated,
@@ -303,6 +304,9 @@ class FeedReconciler:
             # Transfer root metadata to the main section
             if root_total is not None:
                 main_sec.total_items = root_total
+            elif root_next is not None:
+                # If we have a next link but no root_total, we don't know the full length
+                main_sec.total_items = None
             
             if root_next:
                 main_sec.next_url = root_next

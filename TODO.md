@@ -13,7 +13,7 @@
 
 ## Reader & UI
 
-* paging control should not show (of X) if it doesn't know the the last page
+*  readino space opera is infinite sections.
 
 * keystrokes for feed and library
 

@@ -217,6 +217,18 @@ class FeedBrowserModel(QAbstractListModel):
                 self.cover_request_needed.emit(item.cover_url)
         return item
 
+    def append_items(self, items: List[FeedItem]):
+        """Appends items dynamically to the end of the sparse buffer for infinite scrolling."""
+        self.beginResetModel()
+        
+        start_row = self._total_grid_items
+        for i, item in enumerate(items):
+            self._sparse_items[start_row + i] = item
+        
+        self._total_grid_items += len(items)
+        self._rebuild_logical_map()
+        self.endResetModel()
+
     def set_items_for_page(self, page_index: int, items: List[FeedItem], offset: int = 0):
         """Injects fetched items into the sparse buffer."""
         start_row = (page_index - 1) * self._items_per_page
