@@ -80,7 +80,22 @@ class FeedPage(BaseModel):
 
     @property
     def main_section(self) -> Optional[FeedSection]:
-        """Identifies the primary content section for continuous scrolling."""
+        """
+        Identifies the primary content section for continuous scrolling.
+        
+        Current Logic (Strict Match):
+        1. The feed MUST have pagination links at the root level.
+        2. We iterate through root-level collections first, then grouped collections.
+        3. A section is ONLY considered the "main" section if its exact item count perfectly 
+           matches the server's `itemsPerPage` metadata (`feed_items_per_page`).
+           
+        Known Failure Case:
+        If a server returns fewer items than its stated `itemsPerPage` on the first page 
+        (e.g., due to filtering bugs, deleted items, or being a short feed like the Readino 
+        'space_opera' tag returning 23 items when itemsPerPage=24), this strict heuristic 
+        will FAIL to identify the main section. In ScrolledFeedView, this forces a fallback 
+        to "Infinite Sections" mode rather than the preferred "Infinite Grid" mode.
+        """
         if not self.sections:
             return None
 
