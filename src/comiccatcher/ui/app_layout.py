@@ -1060,6 +1060,7 @@ class MainWindow(QMainWindow):
             # Update icon if provided
             if icon:
                 hist[idx]["icon"] = icon
+            
             if not keep_title:
                 hist[idx]["title"] = title
         else:

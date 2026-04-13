@@ -1,4 +1,5 @@
 import asyncio
+import re
 import urllib.parse
 from urllib.parse import urljoin
 import time
@@ -528,14 +529,44 @@ class FeedBrowser(BaseBrowserView):
         if self._last_page:
             self._render_page(self._last_page, self._last_raw_feed)
 
+    def get_current_title(self) -> str:
+        """Retrieves the current breadcrumb title from the parent app layout."""
+        if self.parent() and hasattr(self.parent(), 'parent'):
+            # Path depends on nesting: FeedBrowser -> QStackedWidget -> AppLayout
+            p = self.parent()
+            while p and not hasattr(p, 'get_current_history'):
+                p = p.parent()
+            if p:
+                hist, idx = p.get_current_history()
+                if idx >= 0:
+                    return hist[idx].get("title", "")
+        return self._last_page.title if self._last_page else "Feed"
+
     def _on_nav_clicked(self, rel):
         url = self._paging_urls.get(rel)
         if url:
             # Optimistically update the page label based on the relative direction
             self._set_loading_page(rel)
             
+            # Determine target page number for the breadcrumb title
+            curr = self._last_page.current_page
+            total = self._last_page.total_pages
+            target = curr
+            if rel == "first": target = 1
+            elif rel == "last": target = total or curr
+            elif rel == "next": target = curr + 1
+            elif rel == "previous": target = max(1, curr - 1)
+
+            # Get the base title from the current history (to preserve original link names)
+            # and strip any existing Page suffix
+            base_title = self.get_current_title()
+            base_title = re.sub(r" \(Page \d+\)$", "", base_title)
+            
+            title = base_title
+            if target > 1:
+                title = f"{base_title} (Page {target})"
+            
             # Navigate
-            title = f"Page {self._last_page.current_page}" # Fallback
             self.navigate_requested.emit(url, title, True, "")
 
     def _set_loading_page(self, rel):
