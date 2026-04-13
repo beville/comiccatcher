@@ -13,6 +13,8 @@
 
 ## Reader & UI
 
+* paging control should not show (of X) if it doesn't know the the last page
+
 * keystrokes for feed and library
 
 * reader keystrokes and controls fixing
@@ -32,14 +34,13 @@
 ## bug reports:
 
 * Stump - not handling https links
-* Komga icon komgaandroid name is weird
+* Komga icon komgaandroid url is wrong
 * Komga Latest Series See All, somehow goes to publications 
 * Codex - feed start thinks it's a publisher list 
 
 ## Misc Lower
 
   
-* fix  "komgaandroid" URL hack in `feed_management.py`. (might be a bug report for komga)
 * refactoring opportunities:
   * check for any buttons, margins, sizes, font sizes, etc that aren't scaled
   * centralize all style setting, and have everything respect themes
@@ -51,6 +52,12 @@
 ## Future Enhancments
 * OPDS 1.2 
 * Search/filter in library
-* Inifinite scroll even if no main axis data found
 * Handle OPDS Auth with special GUI
 * Different sized cards: small/medium/large
+* Inifinite scroll for special cases
+  * handle cases of: 
+    * main group found but no last page - this may require reording to have nav section last (if it's the main group) 
+      * readino publications lists need this
+      * build on only the main group, but scroll bar keeps changing size)
+    * no main group, but multi pages (like the litruel "Featured Selections" with no last page link, and many groups)
+      * i guess just add each group after group as they appear in the pages. scroll bar keeps chaging size)

@@ -216,14 +216,31 @@ class FeedReconciler:
                         section.items.pop(0)
                         if section.total_items: section.total_items -= 1
 
-        # 4. Determine Global Page
+        # 4b. Pagination Sanity Check
+        # Discard root itemsPerPage/numberOfItems if they don't match the actual content of any section.
+        if root_ipp is not None and root_next:
+            match_found = False
+            for s in sections:
+                if len(s.items) == root_ipp:
+                    match_found = True
+                    break
+            
+            if not match_found:
+                logger.warning(
+                    f"FeedReconciler: Discarding discrepant root pagination metadata. "
+                    f"itemsPerPage={root_ipp} but no section contains exactly {root_ipp} items (found sections with counts: {[len(s.items) for s in sections]})."
+                )
+                root_ipp = None
+                root_total = None
+
+        # 4c. Determine Global Page
         # (Already defined above as part of root metadata capture)
         
         # 5. Determine Total Pages
         total_pages = None
-        if m and m.numberOfItems and m.itemsPerPage:
+        if root_total is not None and root_ipp:
             import math
-            total_pages = math.ceil(m.numberOfItems / m.itemsPerPage)
+            total_pages = math.ceil(root_total / root_ipp)
 
         # 6. Detect Pagination Template
         pagination_template = None
