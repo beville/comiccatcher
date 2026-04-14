@@ -438,22 +438,108 @@ Run the current test suite:
 
 ```bash
 cd /home/tony/cc/comiccatcher
-/home/tony/cc/test/venv/bin/pytest tests/ -v
-```
+8. [Unit Tests (pytest)](#8-unit-tests-pytest)
+9. [Common Issues](#9-common-issues)
+10. [Full Application E2E Testing (The Driver Pattern)](#10-full-application-e2e-testing-the-driver-pattern)
+11. [Keyboard Scrolling Validation](#11-keyboard-scrolling-validation)
 
-Tests cover:
+---
 
-| File | What it tests |
-|---|---|
+## 8. Unit Tests (pytest)
+...
 | `tests/scrolling/repro_fast_scroll_drift.py` | Grid scroll positioning stability |
 
 ---
 
 ## 9. Common Issues
-
-| Symptom | Cause | Fix |
-|---|---|---|
-| `RuntimeError: no running event loop` | `asyncio.create_task` called before qasync loop | Apply the async patch at top of script (see §2) |
-| `Aborted (core dumped)` | No display server | `pgrep Xvfb || Xvfb :99 -screen 0 1280x800x24 &` then set `DISPLAY=:99` |
-| `ModuleNotFoundError` | Wrong working directory or missing `sys.path` | Add `sys.path.insert(0, '/home/tony/cc/comiccatcher')` and `os.chdir(...)` |
+...
 | `UIConstants` values are 0 or default | `init_scale()` not called | Call `UIConstants.init_scale()` before creating any widget |
+
+---
+
+## 10. Full Application E2E Testing (The Driver Pattern)
+
+This is the preferred method for validating complex features (like scrolling, navigation, or network-dependent UI) in a "true" application environment with real user settings.
+
+### How it works
+The `main.py` entry point supports an `--e2e-driver <path.py>` argument. When provided, the app starts normally and then dynamically loads the script, executing an `async def drive(window)` function.
+
+### Example Driver Script (`scripts/my_driver.py`)
+
+```python
+import asyncio
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtWidgets import QApplication
+
+async def drive(window):
+    print("🚗 E2E Driver Started!")
+    await asyncio.sleep(2) # Wait for window to settle
+
+    # 1. Navigate
+    window.nav_list.setCurrentRow(1) # Library
+    await asyncio.sleep(1)
+
+    # 2. Interact with real widgets
+    lib_view = window.local_library_view
+    sb = lib_view.list_widget.verticalScrollBar()
+    print(f"Current Scroll: {sb.value()}/{sb.maximum()}")
+
+    # 3. Capture Evidence
+    window.grab().save("/tmp/e2e_result.png")
+
+    # 4. Exit
+    QApplication.instance().quit()
+```
+
+### Lessons Learned: Event Propagation
+When writing E2E drivers, **avoid calling `eventFilter()` or event handlers directly** (e.g., `view.eventFilter(target, event)`). This "short-circuits" the standard Qt event propagation chain and can hide bugs where a widget's internal logic (like `QListView`'s default arrow key navigation) consumes the event before your filter ever sees it.
+
+**Correct Approach:** Use `QApplication.postEvent()` to send the event to the widget itself. This ensures the event follows the natural path through the OS and Qt event stack, accurately reflecting the user experience.
+
+```python
+from PyQt6.QtCore import QCoreApplication
+event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+QCoreApplication.postEvent(target_widget, event)
+```
+
+### Running the E2E Test
+
+```bash
+export PYTHONPATH="/home/tony/cc/comiccatcher/src:$PYTHONPATH"
+DISPLAY=:99 /home/tony/cc/test/venv/bin/python \
+    /home/tony/cc/comiccatcher/src/comiccatcher/main.py \
+    --e2e-driver /home/tony/cc/comiccatcher/scripts/my_driver.py \
+    --timeout 60
+```
+
+---
+
+## 11. Keyboard Scrolling Validation
+
+Keyboard scrolling logic is centralized in `comiccatcher.ui.view_helpers.ScrollHelper`. It uses physical UI card heights to ensure "clean" increments (rows aren't cut off).
+
+### Verification Logic
+To verify scrolling via an E2E driver, simulate `QKeyEvent` and filter them through the view's `eventFilter`.
+
+```python
+def send_key(view, key):
+    from PyQt6.QtGui import QKeyEvent
+    from PyQt6.QtCore import QEvent, Qt
+    event = QKeyEvent(QEvent.Type.KeyPress, key, Qt.KeyboardModifier.NoModifier)
+    # The filter is usually installed on the viewport of the scroll area
+    view.eventFilter(view.list_widget.viewport(), event)
+
+# Test sequence
+start = sb.value()
+send_key(lib_view, Qt.Key.Key_Down)
+# Expected: sb.value() == start + (card_height + spacing)
+```
+
+### Key Bindings
+| Key | Action | Implementation |
+|---|---|---|
+| `Down` / `Up` | Scroll one row | `ScrollHelper.scroll_by_step(1)` |
+| `PageDown` / `PageUp` | Scroll one viewport | `sb.pageStep()` |
+| `Home` / `End` | Top / Bottom | `sb.setSliderPosition()` |
+

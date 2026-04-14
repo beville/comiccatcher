@@ -1,5 +1,19 @@
 # ComicCatcher TODO
 
+## Auth
+    For Komga, need to support different auth header from stump or codex
+        X-API-Key: your_generated_key_here
+     Update config dialog to be more clear about exclusive uname/pass, or key, or nothing
+     Support the OPDS v1 Auth method  - do we persist user/pass? Or is there a cookie or something?
+
+
+
+THis shouldn't be happening on a manifest pages?  
+2026-04-14 14:09:07,734 - comiccatcher.api.feed_reconciler - WARNING - FeedReconciler: Discarding discrepant root pagination metadata. itemsPerPage=20 but no section contains exactly 20 items (found sections with counts: [1]).
+
+
+changing library folder doesn't work
+
 ## Reader & UI
 
 * keystrokes for feed and library
@@ -20,7 +34,13 @@
 
 ## bug reports:
 
-* Stump - not handling https links
+* Stump -
+  * full-size thumbnails
+  * pub date format in feed not standard
+  * progression not working
+  * Latest Books / Keep Reading preview groups on start feed aren't getting updated even though the linked feeds are up-to-date
+  * Same problem for <library-name>/Library Books - Latest preview group
+  
 
 ## Misc Lower
   
