@@ -1,6 +1,8 @@
 import httpx
 import locale
+import platform
 from typing import Optional, Dict, Any
+from comiccatcher import __version__
 from comiccatcher.models.feed import FeedProfile
 from comiccatcher.config import NETWORK_TIMEOUT
 
@@ -12,12 +14,17 @@ class APIClient:
             timeout=NETWORK_TIMEOUT,
             follow_redirects=True
         )
-        
+
         self._setup_headers()
         self._setup_auth()
 
     def _setup_headers(self):
-        """Sets up default headers, including system language."""
+        """Sets up default headers, including system language and User-Agent."""
+        # 1. User-Agent
+        ua = f"comiccatcher/{__version__} ({platform.system()}; Desktop)"
+        self.client.headers.update({"User-Agent": ua})
+
+        # 2. Accept-Language
         try:
             # Try to get the system's preferred language/region (e.g. ('en_US', 'UTF-8'))
             lang, encoding = locale.getlocale()
