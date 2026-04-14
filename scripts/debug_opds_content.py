@@ -326,6 +326,28 @@ def handle_feed(raw_data, url, console, args):
     main = page.main_section
     console.print(f"Main Section: {'[green]' + main.title + '[/green]' if main else '[red]None[/red]'}")
     
+    # Calculate Scrolling Mode (matching ScrolledFeedView.render logic)
+    scroll_mode = "Static Mode (no pagination)"
+    style = "dim white"
+    
+    has_groups = any(s.source_element and s.source_element.startswith("group[") for s in page.sections)
+    has_root   = any(s.source_element in ("root:publications", "root:navigation") for s in page.sections)
+    
+    if main and main.total_items is None and page.next_url:
+        scroll_mode = "Infinite Grid (appends items to main grid)"
+        style = "bold cyan"
+    elif not main and page.next_url and has_groups and not has_root:
+        scroll_mode = "Infinite Sections (appends new sections/headers)"
+        style = "bold yellow"
+    elif main and main.total_items is not None:
+        scroll_mode = "Virtualized Grid (pre-allocates rows for total count)"
+        style = "bold green"
+    elif page.next_url:
+        scroll_mode = "Static (Next URL ignored due to Dashboard heuristic)"
+        style = "bold red"
+        
+    console.print(f"Scroll Mode:  [{style}]{scroll_mode}[/{style}]")
+    
     if page.breadcrumbs:
         console.print(f"Breadcrumbs:  {' > '.join(b['title'] for b in page.breadcrumbs)}")
     

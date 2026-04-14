@@ -110,6 +110,8 @@ class FeedReconciler:
             
             if nav_items:
                 sec_id = (m.identifier if m else None) or f"nav_{logical_id}"
+                if curr_page > 1 and not (m and m.identifier):
+                    sec_id = f"{sec_id}_p{curr_page}"
                 
                 sections.append(FeedSection(
                     title="Browse",
@@ -170,9 +172,13 @@ class FeedReconciler:
                     if group.navigation: sources.append("navigation")
                     source_str = f"group[{i}]:{'+'.join(sources)}" if sources else f"group[{i}]"
 
+                    sec_id = (gm.identifier if gm else None) or f"group_{(gm.title if gm else 'anon')}"
+                    if curr_page > 1 and not (gm and gm.identifier):
+                        sec_id = f"{sec_id}_p{curr_page}"
+
                     sections.append(FeedSection(
                         title=(gm.title if gm else None) or "Group",
-                        section_id=(gm.identifier if gm else None) or f"group_{(gm.title if gm else 'anon')}",
+                        section_id=sec_id,
                         items=group_items,
                         total_items=g_total,
                         items_per_page=gm.itemsPerPage if gm else None,
@@ -190,7 +196,9 @@ class FeedReconciler:
             
             if pub_items:
                 sec_id = (m.identifier if m else None) or f"pubs_{logical_id}"
-                
+                if curr_page > 1 and not (m and m.identifier):
+                    sec_id = f"{sec_id}_p{curr_page}"
+
                 sections.append(FeedSection(
                     title="Publications",
                     section_id=sec_id,

@@ -170,11 +170,14 @@ class ScrolledFeedView(BaseFeedSubView):
         self._is_infinite_sections = False
         self._is_fetching_next = False
         
+        has_root_content = any(s.source_element in ("root:publications", "root:navigation") for s in page.sections)
+
         if main and main.total_items is None and self._next_url:
             self._is_infinite_grid = True
             page.sections = [s for s in page.sections if s != main] + [main]
             logger.debug(f"ScrolledFeedView: 'Infinite Grid' Mode enabled. Reordered main section to end.")
-        elif not main and self._next_url:
+        elif not main and self._next_url and not has_root_content:
+            # ONLY enter infinite sections if the feed lacks root-level lists.
             self._is_infinite_sections = True
             logger.debug(f"ScrolledFeedView: 'Infinite Sections' Mode enabled.")
         elif main and main.total_items is not None:

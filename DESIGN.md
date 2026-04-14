@@ -184,6 +184,7 @@ High-level OPDS 2.0 parser with in-memory JSON caching.
 The transformation engine that converts raw `OPDSFeed` objects into `FeedPage` structures. It handles:
 - Detecting "Main" sections for infinite scroll.
 - Normalizing pagination patterns across different server types.
+- **Section Identity**: Generates unique, stable `section_id` strings, appending current page numbers when necessary to prevent collisions in "Infinite Sections" mode.
 - Heuristic-based extraction of series names and issue numbers.
 - Pruning redundant server-side nesting.
 
@@ -334,7 +335,17 @@ Root screen for feed selection.
 A high-level "Traffic Cop" that coordinates feed rendering. It does not perform rendering directly; instead, it delegates to specialized sub-views based on the active feed profile's `paging_mode`.
 
 - **PagedFeedView**: Traditional dashboard layout with stacked `CollapsibleSection` widgets in a `QScrollArea`. Used for highly structured, mixed-content feeds.
-- **ScrolledFeedView**: High-performance continuous scroll using a section-level virtual scroll area (`QAbstractScrollArea`). Each `FeedSection` becomes a real `SectionHeader` + content widget pair positioned directly in the viewport. Large GRID sections (up to 30 k items) use an internal `QListView` whose height is capped to the visible slice and whose scroll position is synced to the outer scrollbar — avoiding Qt's `QWIDGETSIZE_MAX` content-widget limit. Supports sparse page fetching, debounced scrubbing, and lazy thumbnail loading.
+- **ScrolledFeedView**: High-performance continuous scroll using a section-level virtual scroll area (`QAbstractScrollArea`).
+
+#### ScrolledFeedView Scroll Modes
+
+`ScrolledFeedView` dynamically selects a strategy based on the `FeedPage` structure:
+
+1. **Virtualized Grid**: Used when a primary content section (`main_section`) is identified with a known `total_items`. The view pre-allocates the entire vertical scroll range, fetching items sparsely as they enter the viewport.
+2. **Infinite Grid**: Used when a `main_section` is identified but its total length is unknown. New items are fetched from the `next_url` and appended to the existing grid as the user scrolls.
+3. **Infinite Sections**: Used for feeds that lack a single primary grid but provide a `next_url` (e.g., a dashboard that continues to add new categorical groups). New pages are fetched and their sections (headers + content) are appended to the view.
+4. **Static Mode**: The fallback for feeds without pagination metadata or those that do not qualify for the automated scrolling modes. Only the first page is rendered.
+
 - **Search Integration**: Redirects search queries to the relevant OPDS search template, rendering results via the standard paged/scrolled sub-views.
 
 ### FeedDetailView (`views/feed_detail.py`)

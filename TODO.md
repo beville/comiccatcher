@@ -45,13 +45,3 @@
 * Handle OPDS Auth with special GUI
 * Different sized cards: small/medium/large
 
-Semantic version
-v0.1.0
-Build channel
-
-Experimental
-Exact commit
-1a6932ad
-Build date
-
-April 13, 2026 at 11:57 AM
