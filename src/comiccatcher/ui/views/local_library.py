@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QScrollArea, QApplication, QStyledItemDelegate, QStyle,
     QAbstractItemView, QSizePolicy, QFrame, QSpacerItem, QListView
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSlot, pyqtSignal, QRect, QModelIndex, QPoint, QTimer, QItemSelectionModel
+from PyQt6.QtCore import Qt, QSize, pyqtSlot, pyqtSignal, QRect, QModelIndex, QPoint, QTimer, QItemSelectionModel, QEvent
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QBrush, QPen, QImage, QPixmapCache, QKeyEvent, QStandardItemModel, QStandardItem
 
 from comiccatcher.config import ConfigManager, CONFIG_DIR
@@ -18,6 +18,7 @@ from comiccatcher.api.image_manager import ImageManager
 from comiccatcher.ui.local_archive import read_archive_first_image
 from comiccatcher.ui.local_comicbox import flatten_comicbox, read_comicbox_dict, subtitle_from_flat, read_comicbox_cover, generate_comic_labels
 from comiccatcher.ui.theme_manager import ThemeManager, UIConstants
+from comiccatcher.ui.view_helpers import ScrollHelper
 from comiccatcher.api.local_db import LocalLibraryDB
 from comiccatcher.api.library_scanner import LibraryScanner
 from comiccatcher.ui.views.base_browser import BaseBrowserView
@@ -301,7 +302,31 @@ class LibrarySection(CollapsibleSection):
             self._update_grid_height()
 
     def eventFilter(self, source, event):
-        """Dynamic cursor change when hovering over items."""
+        """Unified handling for wheel forwarding, key scrolling, and cursor management across library views."""
+        # 1. Forward wheel events to the parent LocalLibraryView to prevent "wobble"
+        if event.type() == QEvent.Type.Wheel:
+            dy = event.angleDelta().y()
+            if dy != 0:
+                parent = self.parentWidget()
+                while parent and not hasattr(parent, "grouped_scroll"):
+                    parent = parent.parentWidget()
+                if parent:
+                    sb = parent.grouped_scroll.verticalScrollBar()
+                    step = UIConstants.scale(20)
+                    sb.setValue(sb.value() - (dy * step) // 120)
+                    return True # Eat the event
+
+        # 2. Key-based vertical scrolling - Forward to parent
+        if event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End):
+                parent = self.parentWidget()
+                while parent and not isinstance(parent, LocalLibraryView):
+                    parent = parent.parentWidget()
+                if parent:
+                    return parent.eventFilter(source, event)
+
+        # 3. Dynamic cursor change when hovering over items.
         if hasattr(self, 'list_widget') and source is self.list_widget.viewport() and event.type() == event.Type.MouseMove:
             index = self.list_widget.indexAt(event.pos())
             if index.isValid():
@@ -625,6 +650,16 @@ class LocalLibraryView(BaseBrowserView):
         self.add_content_widget(self.stack)
         
         self._is_dirty = True # Flag for initial load in showEvent
+
+        # Key scrolling event filters - Install on BOTH the widget (for keys) and viewport (for mouse)
+        self.list_widget.installEventFilter(self)
+        self.list_widget.viewport().installEventFilter(self)
+        
+        self.alpha_list.installEventFilter(self)
+        self.alpha_list.viewport().installEventFilter(self)
+        
+        self.grouped_scroll.installEventFilter(self)
+        self.grouped_scroll.viewport().installEventFilter(self)
 
     def toggle_selection_mode(self, enabled: Optional[bool] = None):
         if enabled is None:
@@ -1619,3 +1654,37 @@ class LocalLibraryView(BaseBrowserView):
                         logger.error(f"Failed to delete {p_str}: {e}")
                 logger.info(f"Group deleted {deleted} items.")
                 self.refresh_and_scan()
+
+    def eventFilter(self, source, event):
+        """Unified handling for key scrolling and cursor management across library views."""
+        # 1. Key-based vertical scrolling
+        if ScrollHelper.handle_vertical_scroll_key(event, self._get_target_scrollbar(), self._get_scroll_step):
+            return True
+
+        # 2. Shared cursor management for list viewports
+        if event.type() == QEvent.Type.MouseMove:
+            # We trust the source is a viewport of one of our lists
+            if hasattr(source, "parent") and isinstance(source.parent(), (QListWidget, QListView)):
+                view = source.parent()
+                index = view.indexAt(event.pos())
+                view.setCursor(
+                    Qt.CursorShape.PointingHandCursor if index.isValid()
+                    else Qt.CursorShape.ArrowCursor)
+                return True
+
+        return super().eventFilter(source, event)
+
+    def _get_scroll_step(self) -> int:
+        """Returns the height of one logical row (card height + gutter)."""
+        # Local library cards DO show progress bars by default
+        return UIConstants.get_card_height(self._show_labels, reserve_progress_space=True) + UIConstants.GRID_GUTTER
+
+    def _get_target_scrollbar(self):
+        """Returns the vertical scrollbar that should handle global scrolling."""
+        if self.stack.currentIndex() == 0: # Folders
+            return self.list_widget.verticalScrollBar()
+        elif self.stack.currentIndex() == 1: # Grouped
+            return self.grouped_scroll.verticalScrollBar()
+        elif self.stack.currentIndex() == 2: # Grid
+            return self.alpha_list.verticalScrollBar()
+        return None

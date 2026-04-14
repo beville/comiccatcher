@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QEvent
 from comiccatcher.ui.theme_manager import UIConstants
 from comiccatcher.ui.components.feed_browser_model import FeedBrowserModel
 from comiccatcher.ui.components.feed_card_delegate import FeedCardDelegate
+from comiccatcher.ui.view_helpers import ScrollHelper
 
 from comiccatcher.models.feed_page import FeedPage, FeedSection, FeedItem
 
@@ -40,11 +41,18 @@ class BaseFeedSubView(QWidget):
         view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         view.viewport().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         # Register for unified event handling
+        # Install on the VIEW and its VIEWPORT
+        view.installEventFilter(self)
         view.viewport().installEventFilter(self)
 
+    def register_scroll_area(self, scroll_area: QWidget):
+        """Installs filters on the main scroll container (e.g. ScrolledFeedView._impl)."""
+        scroll_area.installEventFilter(self)
+        scroll_area.viewport().installEventFilter(self)
+
     def eventFilter(self, source, event):
-        """Unified handling for wheel forwarding and cursor management across all feed sub-views."""
-        # 1. Forward wheel events to the primary vertical scrollbar to prevent "wobble"
+        """Unified handling for wheel forwarding, key scrolling, and cursor management across all feed sub-views."""
+        # 1. Forward wheel events (always from viewport)
         if event.type() == QEvent.Type.Wheel:
             dy = event.angleDelta().y()
             if dy != 0:
@@ -54,7 +62,11 @@ class BaseFeedSubView(QWidget):
                     sb.setValue(sb.value() - (dy * step) // 120)
                     return True # Eat the event so the internal widget doesn't nudge
 
-        # 2. Shared cursor management for all list viewports
+        # 2. Key-based vertical scrolling
+        if ScrollHelper.handle_vertical_scroll_key(event, self._get_target_scrollbar(), self._get_scroll_step):
+            return True
+
+        # 3. Shared cursor management for all list viewports
         if event.type() == QEvent.Type.MouseMove:
             # Find which view this viewport belongs to
             views = self._get_all_subviews()
@@ -67,6 +79,11 @@ class BaseFeedSubView(QWidget):
                     break
 
         return super().eventFilter(source, event)
+
+    def _get_scroll_step(self) -> int:
+        """Returns the height of one logical row (card height + gutter)."""
+        # Feed cards never show progress bars
+        return UIConstants.get_card_height(self._show_labels, reserve_progress_space=False) + UIConstants.GRID_GUTTER
 
     def _get_target_scrollbar(self):
         """Returns the vertical scrollbar that should handle global scrolling."""
@@ -108,6 +125,7 @@ class BaseFeedSubView(QWidget):
 
         # Ribbon height = Card + Gutter + Scrollbar
         return card_h + UIConstants.RIBBON_SCROLLBAR_GUTTER + scrollbar_h
+
     def update_header_margins(self, scroll_bar):
         """Standardized helper to update header margins for scrollbar awareness."""
         if not scroll_bar: return
@@ -124,7 +142,6 @@ class BaseFeedSubView(QWidget):
             section.set_right_margin(header_margin)
 
     def gather_context_pubs(self, model: FeedBrowserModel) -> List[object]:
-
         """Collects raw publication objects from a model to provide reading context."""
         context_pubs = []
         # Support both sparse items (dict) and logical items (list)

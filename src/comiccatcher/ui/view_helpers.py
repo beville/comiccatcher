@@ -1,8 +1,33 @@
 import asyncio
 from typing import Set, Tuple, Optional, Callable
-from PyQt6.QtCore import QPoint
-from PyQt6.QtWidgets import QListView
+from PyQt6.QtCore import QPoint, Qt, QEvent
+from PyQt6.QtWidgets import QListView, QScrollBar
 from comiccatcher.models.feed_page import FeedItem
+from comiccatcher.ui.theme_manager import UIConstants
+
+class ScrollHelper:
+    """Shared logic for vertical scrolling (Arrows, PageUp/Down, Home/End)."""
+    @staticmethod
+    def handle_vertical_scroll_key(event, scroll_bar: Optional[QScrollBar], step_provider: Callable[[], int]) -> bool:
+        if not scroll_bar or event.type() != QEvent.Type.KeyPress:
+            return False
+            
+        key = event.key()
+        if key in (Qt.Key.Key_Up, Qt.Key.Key_Down, Qt.Key.Key_PageUp, Qt.Key.Key_PageDown, Qt.Key.Key_Home, Qt.Key.Key_End):
+            if key == Qt.Key.Key_Up:
+                scroll_bar.setValue(scroll_bar.value() - step_provider())
+            elif key == Qt.Key.Key_Down:
+                scroll_bar.setValue(scroll_bar.value() + step_provider())
+            elif key == Qt.Key.Key_PageUp:
+                scroll_bar.setValue(scroll_bar.value() - scroll_bar.pageStep())
+            elif key == Qt.Key.Key_PageDown:
+                scroll_bar.setValue(scroll_bar.value() + scroll_bar.pageStep())
+            elif key == Qt.Key.Key_Home:
+                scroll_bar.setValue(0)
+            elif key == Qt.Key.Key_End:
+                scroll_bar.setValue(scroll_bar.maximum())
+            return True
+        return False
 
 class ViewportHelper:
     """

@@ -32,6 +32,8 @@ class PagedFeedView(BaseFeedSubView):
         self.layout.setSpacing(0)
         
         self.scroll_area = QScrollArea()
+        self.register_scroll_area(self.scroll_area)
+        
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         

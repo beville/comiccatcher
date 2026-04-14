@@ -3,8 +3,9 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QProgressBar, QSizePolicy, QFrame
 )
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer, QEvent
 from comiccatcher.ui.theme_manager import ThemeManager, UIConstants
+from comiccatcher.ui.view_helpers import ScrollHelper
 
 class BaseBrowserView(QWidget):
     """
@@ -263,12 +264,28 @@ class BaseBrowserView(QWidget):
             self.btn_select.setChecked(enabled)
 
     def keyPressEvent(self, event):
-        """Handle Escape key to exit selection mode."""
+        """Handle Escape key to exit selection mode and shared scrolling keys."""
         if event.key() == Qt.Key.Key_Escape and self._selection_mode:
             self.toggle_selection_mode(False)
             event.accept()
+        elif self.handle_vertical_scroll_key(event):
+            event.accept()
         else:
             super().keyPressEvent(event)
+
+    def handle_vertical_scroll_key(self, event) -> bool:
+        """Shared logic for vertical scrolling (Arrows, PageUp/Down, Home/End)."""
+        return ScrollHelper.handle_vertical_scroll_key(event, self._get_target_scrollbar(), self._get_scroll_step)
+
+    def _get_target_scrollbar(self):
+        """Must be implemented by subclasses to provide the active scrollbar."""
+        return None
+
+    def _get_scroll_step(self) -> int:
+        """Standard scroll step based on scaled row height. Overridden by views if they have specific card types."""
+        # Use card height with labels and progress as a conservative default for library-like views
+        return UIConstants.get_card_height(True, reserve_progress_space=True) + UIConstants.GRID_GUTTER
+
 
     def set_all_sections_collapsed(self, collapsed: bool):
         """Universal helper to expand/collapse all CollapsibleSection children."""

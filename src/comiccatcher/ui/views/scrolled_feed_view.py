@@ -97,6 +97,8 @@ class ScrolledFeedView(BaseFeedSubView):
 
         # Scrollable container — viewport() is a properly-clipping QWidget
         self._impl = _ScrollImpl(self)
+        self.register_scroll_area(self._impl)
+        
         self._vp   = self._impl.viewport()
         self._vp.setMouseTracking(True)
         self._sb   = self._impl.verticalScrollBar()
