@@ -7,19 +7,22 @@
 [![PyPI version](https://img.shields.io/pypi/v/comiccatcher.svg)](https://pypi.org/project/comiccatcher/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**ComicCatcher** is a desktop OPDS 2.0 browser and comic reader. It's been mostly tested with self-hosted comic servers like [**Codex**](https://github.com/ajslater/codex), [**Komga**](https://komga.org), and [**Stump**](https://stumpapp.dev), but should work with any server that supports similar features. If supported by the server, it comics can be streamed page-by-page, or downloaded and read offline.  It's written in Python and runs on Linux, Windows, and macOS.
+**ComicCatcher** is a desktop OPDS 2.0 browser and comic reader. It's been mostly tested with self-hosted comic servers like [**Codex**](https://github.com/ajslater/codex), [**Komga**](https://komga.org), and [**Stump**](https://stumpapp.dev), but should work with any server that supports similar features. If supported by the server, comics can be streamed page-by-page, or downloaded and read offline.  The usage paradigm is inspired by podcast "podcatcher" apps which stream and download, but don't maintain huge libraries of local files. It's written in Python and runs on Linux, Windows, and macOS (not yet tested 🤞).
+
+
+🚨 **NOTE** This is still an early alpha and is very untested, so mostly likely it will be broken for you. 🙈 
 
 ---
 
 ## 📸 Screenshots
 
-| Feed Selection | Feed Browser |
-|:---:|:---:|
-| ![Feed Selection](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/feed-selection.png) | ![Feed Browser](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/komga-browse.png) |
+| Feed Selection | Feed Browser | Popup Details |
+|:---:|:---:|:---:|
+| ![Feed Selection](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/feed-selection.png) | ![Feed Browser](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/komga-browse.png) | ![Popup Details](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/codex-mini-details.png) |
 
-| Popup Details in Browser | Full Comic Details |
-|:---:|:---:|
-| ![Popup Details in Browser](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/codex-mini-details.png) | ![Full Comic Details](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/stump-feed-details.png) |
+| Full Comic Details | Reader with Transition | Library Groups |
+|:---:|:---:|:---:|
+| ![Full Comic Details](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/stump-feed-details.png) | ![Reader Transition](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/reader-with-prev.png) | ![Library Groups](https://raw.githubusercontent.com/beville/comiccatcher/main/docs/screenshots/library-groups.png) |
 
 ---
 

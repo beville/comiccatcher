@@ -353,7 +353,7 @@ class MainWindow(QMainWindow):
         
         self.local_library_view = LocalLibraryView(self.config_manager, self.on_open_local_comic, self.image_manager, self.local_db)
         self.local_library_view.nav_changed.connect(self.update_header)
-        self.settings_view.library_reset.connect(self.local_library_view.set_dirty)
+        self.settings_view.library_reset.connect(self._on_library_path_changed)
         
         self.local_detail_view = LocalDetailView(self.config_manager, self.on_back_to_local_library, self.image_manager, self.on_read_local_comic, self.local_db)
         
@@ -405,6 +405,13 @@ class MainWindow(QMainWindow):
 
         # Restore last state
         QTimer.singleShot(0, self._restore_last_state)
+
+    def _on_library_path_changed(self):
+        """Update both local library and download manager when path changes in settings."""
+        new_path = self.config_manager.get_library_dir()
+        self.local_library_view.set_dirty()
+        if self.download_manager:
+            self.download_manager.set_download_dir(new_path)
 
     def _apply_theme(self):
         theme_name = self.config_manager.get_theme()

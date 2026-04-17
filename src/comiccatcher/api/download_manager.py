@@ -157,6 +157,11 @@ class DownloadManager:
         self._queue = asyncio.Queue()
         self._worker_task: Optional[asyncio.Task] = None
 
+    def set_download_dir(self, path: Path | str):
+        """Update the directory where new downloads will be saved."""
+        self.download_dir = Path(path)
+        logger.info(f"DownloadManager: output directory updated to {self.download_dir}")
+
     def _ensure_worker(self):
         if self._worker_task is None or self._worker_task.done():
             self._worker_task = asyncio.create_task(self._queue_worker())

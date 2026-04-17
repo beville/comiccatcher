@@ -294,7 +294,7 @@ class LibrarySection(CollapsibleSection):
 
     def reapply_theme(self):
         """Theme-aware update for section header and delegate."""
-        self._update_ui_state() # Will update chevron color and ensure everything uses current theme
+        super().reapply_theme()
         self.delegate.show_labels = self.show_labels
         self.list_widget.viewport().update()
 
