@@ -27,16 +27,10 @@ EOF
 
 # Read the current version directly from __init__.py
 BASE_VERSION=$(grep -oP '(?<=__version__ = ")[^"]+' "$INIT_FILE")
+PACKAGED_VERSION="$BASE_VERSION"
 
-# If it's an alpha (a), beta (b), or release candidate (rc), append the local version tag
-if [[ "$BASE_VERSION" =~ (a|b|rc)[0-9]+$ ]]; then
-    PACKAGED_VERSION="${BASE_VERSION}+${LOCAL_VER}"
-    echo "Pre-release version detected. Setting package version to $PACKAGED_VERSION"
-    # Create a backup and replace the version inline
-    sed -i.bak "s/__version__ = \"$BASE_VERSION\"/__version__ = \"$PACKAGED_VERSION\"/" "$INIT_FILE"
-else
-    echo "Standard release version detected: $BASE_VERSION"
-fi
+echo "Using package version: $PACKAGED_VERSION"
+# No dynamic version modification of __init__.py required if we use base version.
 
 echo "📦 Building package..."
 # Build the wheel and source distribution
