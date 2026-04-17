@@ -1,7 +1,7 @@
 import subprocess
 from pathlib import Path
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0a2"
 
 def get_version_string() -> str:
     """Returns the base version, optionally appended with git build info."""
