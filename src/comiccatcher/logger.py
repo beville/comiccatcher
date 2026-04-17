@@ -24,11 +24,12 @@ def setup_logging(debug=False):
     console_handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root_logger.addHandler(console_handler)
     
-    # File Handler - Always log at DEBUG level to file for troubleshooting
-    file_handler = logging.FileHandler("comiccatcher.log", mode='a', encoding='utf-8')
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    root_logger.addHandler(file_handler)
+    # File Handler - Only log to file in DEBUG mode
+    if debug:
+        file_handler = logging.FileHandler("comiccatcher.log", mode='a', encoding='utf-8')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(LOG_FORMAT))
+        root_logger.addHandler(file_handler)
 
     # Clamp noisy third-party loggers to INFO so ComicCatcher DEBUG logs stay readable.
     noisy = [
@@ -41,7 +42,10 @@ def setup_logging(debug=False):
     for name in noisy:
         logging.getLogger(name).setLevel(logging.INFO)
     
-    logging.getLogger("comiccatcher").info(f"Logging initialized. Level: {'DEBUG' if debug else 'INFO'}. File: comiccatcher.log (Always DEBUG)")
+    msg = f"Logging initialized. Level: {'DEBUG' if debug else 'INFO'}."
+    if debug:
+        msg += " File: comiccatcher.log (Always DEBUG)"
+    logging.getLogger("comiccatcher").info(msg)
 
 def get_logger(name):
     return logging.getLogger(f"comiccatcher.{name}")

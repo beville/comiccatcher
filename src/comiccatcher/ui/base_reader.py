@@ -891,65 +891,74 @@ class BaseReaderView(QWidget):
         
         vbar = self.view.verticalScrollBar()
         hbar = self.view.horizontalScrollBar()
+        vp_h = self.view.viewport().height()
 
         # 1. Typewriter flow (Fit Width/Height, Not Continuous)
         if self._fit_mode in (FitMode.FIT_WIDTH, FitMode.FIT_HEIGHT, FitMode.ORIGINAL, FitMode.CUSTOM) and self._page_layout != PageLayout.CONTINUOUS:
-            # We only use typewriter flow if there's actually horizontal scroll space
-            if hbar.maximum() > 0:
-                scroll_amount_h = 80
-                v_jump = self.view.viewport().height() * 0.7
-                
-                if dy < 0: # Scroll "Down" / Forward
+            scroll_amount_h = 80
+            v_jump = int(vp_h * 0.7) # 70% of viewport for overlap
+            
+            if dy < 0: # Scroll "Down" / Forward
+                # 1a. Try Horizontal panning first (if it has range)
+                if hbar.maximum() > 0:
                     if not self._rtl: # LtR
                         if hbar.value() < hbar.maximum():
                             hbar.setValue(hbar.value() + scroll_amount_h)
-                        elif vbar.value() < vbar.maximum():
-                            vbar.setValue(int(vbar.value() + v_jump))
-                            hbar.setValue(hbar.minimum())
-                        else:
-                            self._next()
+                            return True
                     else: # RtL
                         if hbar.value() > hbar.minimum():
                             hbar.setValue(hbar.value() - scroll_amount_h)
-                        elif vbar.value() < vbar.maximum():
-                            vbar.setValue(int(vbar.value() + v_jump))
-                            hbar.setValue(hbar.maximum())
-                        else:
-                            self._next()
-                    return True
-                elif dy > 0: # Scroll "Up" / Backward
-                    if not self._rtl: # LtR
-                        if hbar.value() > hbar.minimum():
-                            hbar.setValue(hbar.value() - scroll_amount_h)
-                        elif vbar.value() > vbar.minimum():
-                            vbar.setValue(int(vbar.value() - v_jump))
-                            hbar.setValue(hbar.maximum())
-                        else:
-                            self._prev()
-                    else: # RtL
-                        if hbar.value() < hbar.maximum():
-                            hbar.setValue(hbar.value() + scroll_amount_h)
-                        elif vbar.value() > vbar.minimum():
-                            vbar.setValue(int(vbar.value() - v_jump))
-                            hbar.setValue(hbar.minimum())
-                        else:
-                            self._prev()
-                    return True
-            
-            # Fallback to standard vertical smart navigation if no horizontal scroll space
-            elif vbar.maximum() > 0:
-                if dy < 0: # Scrolling down
-                    if vbar.value() >= vbar.maximum():
-                        self._next()
-                        return True
-                elif dy > 0: # Scrolling up
-                    if vbar.value() <= vbar.minimum():
-                        self._prev()
-                        return True
-            
-            return False # Pass through to allow native vertical scroll
+                            return True
 
-        # 2. Default: Simple next/prev page
+                # 1b. Try Vertical panning next
+                if vbar.maximum() > 0:
+                    if vbar.value() < vbar.maximum():
+                        vbar.setValue(min(vbar.maximum(), vbar.value() + v_jump))
+                        # Reset horizontal to start of line
+                        hbar.setValue(hbar.maximum() if self._rtl else hbar.minimum())
+                        return True
+                
+                # 1c. If at bottom-right (or bottom-left for RtL), Next Page
+                self._next()
+                return True
+
+            elif dy > 0: # Scroll "Up" / Backward
+                # 1a. Try Horizontal panning first (if it has range)
+                if hbar.maximum() > 0:
+                    if not self._rtl: # LtR
+                        if hbar.value() > hbar.minimum():
+                            hbar.setValue(hbar.value() - scroll_amount_h)
+                            return True
+                    else: # RtL
+                        if hbar.value() < hbar.maximum():
+                            hbar.setValue(hbar.value() + scroll_amount_h)
+                            return True
+
+                # 1b. Try Vertical panning next
+                if vbar.maximum() > 0:
+                    if vbar.value() > vbar.minimum():
+                        vbar.setValue(max(vbar.minimum(), vbar.value() - v_jump))
+                        # Reset horizontal to end of line
+                        hbar.setValue(hbar.minimum() if self._rtl else hbar.maximum())
+                        return True
+                
+                # 1c. If at top-left (or top-right for RtL), Prev Page
+                self._prev()
+                return True
+            
+            return False
+
+        # 2. Continuous Mode: pass through for native scrolling, but handle boundaries
+        if self._page_layout == PageLayout.CONTINUOUS:
+            if dy < 0 and vbar.value() >= vbar.maximum():
+                self._next()
+                return True
+            elif dy > 0 and vbar.value() <= vbar.minimum():
+                self._prev()
+                return True
+            return False
+
+        # 3. Default (Fit Page): Simple next/prev page
         if dy < 0:
             self._next()
         else:

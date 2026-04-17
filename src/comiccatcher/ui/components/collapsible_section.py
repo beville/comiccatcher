@@ -138,3 +138,9 @@ class CollapsibleSection(QWidget):
         """Adjusts the right margin of the header, typically for scrollbar awareness."""
         m = self.header_layout.contentsMargins()
         self.header_layout.setContentsMargins(m.left(), m.top(), margin, m.bottom())
+
+    def reapply_theme(self):
+        """Theme-aware update for header and chevron."""
+        theme = ThemeManager.get_current_theme_colors()
+        self.header_label.setStyleSheet(f"font-size: {UIConstants.FONT_SIZE_SECTION_HEADER}px; font-weight: bold; color: {theme['text_main']};")
+        self._update_ui_state()

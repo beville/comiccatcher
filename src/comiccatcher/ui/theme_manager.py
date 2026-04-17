@@ -212,6 +212,7 @@ class UIConstants:
     # --- 2. Live Attributes (Auto-initialized to base values) ---
     HEADER_HEIGHT = _BASE_HEADER_HEIGHT
     STATUS_HEIGHT = _BASE_STATUS_HEIGHT
+    BOTTOM_BAR_HEIGHT = 30  # Default fallback
     FONT_SIZE_SECTION_HEADER = _BASE_FONT_SIZE_SECTION_HEADER
     FONT_SIZE_DEFAULT = _BASE_FONT_SIZE_DEFAULT
     FONT_SIZE_CARD_LABEL = _BASE_FONT_SIZE_CARD_LABEL
@@ -327,16 +328,6 @@ class UIConstants:
         return max(1, int(val * cls._scale_factor)) if val > 0 else 0
 
     @classmethod
-    @property
-    def BOTTOM_BAR_HEIGHT(cls) -> int:
-        from PyQt6.QtGui import QFont, QFontMetrics
-        font = QFont()
-        font.setPixelSize(cls.FONT_SIZE_BOTTOM_BAR)
-        metrics = QFontMetrics(font)
-        # Line spacing + 8px total vertical padding (scaled)
-        return metrics.lineSpacing() + cls.scale(8)
-
-    @classmethod
     def set_scale(cls, factor: float):
         cls._scale_factor = max(0.5, min(3.0, factor))
         cls.init_scale()
@@ -409,15 +400,21 @@ class UIConstants:
         app = QApplication.instance()
         if app:
             from PyQt6.QtGui import QFont, QFontMetrics
+            # Card Labels
             font = QFont()
             font.setPixelSize(cls.FONT_SIZE_CARD_LABEL)
             metrics = QFontMetrics(font)
-            # lineSpacing() * 2 gives us room for exactly two rows of text.
-            # Add a small buffer for descenders/accents.
             cls.CARD_LABEL_HEIGHT = (metrics.lineSpacing() * 2) + cls.scale(4)
+
+            # Bottom Bar
+            font_bb = QFont()
+            font_bb.setPixelSize(cls.FONT_SIZE_BOTTOM_BAR)
+            metrics_bb = QFontMetrics(font_bb)
+            cls.BOTTOM_BAR_HEIGHT = metrics_bb.lineSpacing() + cls.scale(8)
         else:
             # Fallback if no app instance
             cls.CARD_LABEL_HEIGHT = cls.scale(cls._BASE_CARD_LABEL_HEIGHT)
+            cls.BOTTOM_BAR_HEIGHT = cls.scale(32)
 
         cls.PROGRESS_BAR_HEIGHT = cls.scale(cls._BASE_PROGRESS_BAR_HEIGHT)
         cls.PROGRESS_BAR_TOTAL_HEIGHT = cls.scale(cls._BASE_PROGRESS_BAR_TOTAL_HEIGHT)
