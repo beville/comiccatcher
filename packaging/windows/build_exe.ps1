@@ -1,5 +1,7 @@
 # ComicCatcher Windows Build Script
 $ErrorActionPreference = "Stop"
+# Ensure we can run the activation script
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
 # Project root (packaging/windows/build_exe.ps1 -> project root)
 $BASE_DIR = (Get-Item "$PSScriptRoot\..\..").FullName
@@ -26,12 +28,12 @@ echo "🖼️  Creating Windows icon..."
 $ICON_PNG = "src/comiccatcher/resources/app_256.png"
 $ICON_ICO = "packaging/windows/comiccatcher.ico"
 
-# Simple python script to convert png to ico using Pillow
-python -c @"
-from PIL import Image
-img = Image.open('$ICON_PNG')
-img.save('$ICON_ICO', format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
-"@
+# We use a single-line command for python -c to avoid PowerShell parser issues
+# We also normalize slashes to forward slashes for Python
+$PNG_PATH = $ICON_PNG.Replace('\','/')
+$ICO_PATH = $ICON_ICO.Replace('\','/')
+$PYTHON_CODE = "from PIL import Image; img = Image.open('$PNG_PATH'); img.save('$ICO_PATH', format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])"
+python -c "$PYTHON_CODE"
 
 # 4. Build EXE with PyInstaller
 echo "🚀 Running PyInstaller..."
