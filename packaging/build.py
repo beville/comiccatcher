@@ -84,7 +84,13 @@ def build_windows():
     img = Image.open(PROJECT_ROOT / "src/comiccatcher/resources/app_256.png")
     img.save(icon_ico, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
     
-    run_pyinstaller(icon_ico)
+    # Windows needs more aggressive collection for DLLs
+    run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed", "--onefile",
+         "--name", APP_NAME, "--icon", str(icon_ico),
+         "--collect-all", "PyQt6",
+         "--collect-submodules", "comiccatcher",
+         "--add-data", f"src/comiccatcher/resources{os.pathsep}comiccatcher/resources",
+         "src/comiccatcher/main.py"])
     log(f"Windows build complete: {DIST_DIR}/{APP_NAME}.exe")
 
 def build_macos():
