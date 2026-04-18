@@ -81,16 +81,23 @@ def build_windows():
     
     from PIL import Image
     import PyQt6
-    pyqt_path = Path(PyQt6.__file__).parent / "Qt6" / "bin"
+    
+    # Meticulous DLL discovery: Find the Qt6 bin directory
+    pyqt_dir = Path(PyQt6.__file__).parent
+    qt_bin_dir = pyqt_dir / "Qt6" / "bin"
+    log(f"Found PyQt6 bin directory: {qt_bin_dir}")
+    
+    # We explicitly add the bin directory to binaries to ensure ICU and other DLLs are included
+    # Syntax for --add-binary is "SOURCE;DEST"
+    dll_bundle = f"{qt_bin_dir}{os.pathsep}PyQt6/Qt6/bin"
     
     icon_ico = PACKAGING_DIR / "windows/comiccatcher.ico"
     img = Image.open(PROJECT_ROOT / "src/comiccatcher/resources/app_256.png")
     img.save(icon_ico, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
     
-    # Use --paths to help PyInstaller find the DLLs
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed", "--onefile",
          "--name", APP_NAME, "--icon", str(icon_ico),
-         "--paths", str(pyqt_path),
+         "--add-binary", dll_bundle,
          "--collect-all", "PyQt6",
          "--collect-submodules", "comiccatcher",
          "--add-data", f"src/comiccatcher/resources{os.pathsep}comiccatcher/resources",
