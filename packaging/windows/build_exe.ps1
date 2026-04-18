@@ -1,14 +1,16 @@
 # ComicCatcher Windows Build Script
 $ErrorActionPreference = "Stop"
 
-# Project root
-$BASE_DIR = Resolve-Path "$PSScriptRoot\..\.."
+# Project root (packaging/windows/build_exe.ps1 -> project root)
+$BASE_DIR = (Get-Item "$PSScriptRoot\..\..").FullName
 cd $BASE_DIR
+echo "📍 Working directory: $BASE_DIR"
 
 # 1. Setup Environment (Isolated Venv)
 echo "📦 Setting up isolated build environment..."
+if (Test-Path "build_venv") { Remove-Item -Recurse -Force "build_venv" }
 python -m venv build_venv
-.\build_venv\Scripts\Activate.ps1
+& ".\build_venv\Scripts\Activate.ps1"
 
 # Upgrade pip and install tools in the venv
 python -m pip install --upgrade pip
@@ -33,7 +35,6 @@ img.save('$ICON_ICO', format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (
 
 # 4. Build EXE with PyInstaller
 echo "🚀 Running PyInstaller..."
-# Use python -m PyInstaller to ensure we use the venv's copy
 python -m PyInstaller --noconfirm --windowed --onefile `
     --name "ComicCatcher" `
     --icon "$ICON_ICO" `
@@ -41,4 +42,10 @@ python -m PyInstaller --noconfirm --windowed --onefile `
     --add-data "src/comiccatcher/resources;comiccatcher/resources" `
     "src/comiccatcher/main.py"
 
-echo "✅ Windows build complete: dist/ComicCatcher.exe"
+# 5. Verification
+if (Test-Path "dist/ComicCatcher.exe") {
+    echo "✅ Windows build complete: dist/ComicCatcher.exe"
+} else {
+    echo "❌ Error: dist/ComicCatcher.exe was not created!"
+    exit 1
+}
