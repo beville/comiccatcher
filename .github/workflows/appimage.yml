@@ -57,7 +57,8 @@ jobs:
         with:
           python-version: '3.12'
       - name: Build EXE
-        run: powershell -File packaging/windows/build_exe.ps1
+        shell: bash
+        run: bash packaging/windows/build_exe.sh
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
