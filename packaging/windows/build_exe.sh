@@ -9,8 +9,8 @@ echo "📦 Setting up Tox environment..."
 python -m pip install --upgrade pip
 python -m pip install tox
 
-echo "🚀 Running Tox build..."
-python -m tox r -e build
+echo "🚀 Running Tox build for Windows..."
+python -m tox r -e build_win
 
 # Verification
 if [ -f "dist/ComicCatcher.exe" ]; then

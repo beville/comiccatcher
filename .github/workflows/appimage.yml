@@ -65,7 +65,7 @@ jobs:
           name: ComicCatcher-Windows
           path: dist/ComicCatcher.exe
       - name: Upload to Release
-#        if: github.event_name == 'release'
+        if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/ComicCatcher.exe
