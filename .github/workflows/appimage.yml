@@ -12,36 +12,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v6
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller Pillow python-appimage .
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libfuse2 curl
-      - name: Build AppImage
-        run: python packaging/build.py --linux
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ComicCatcher-Linux
-          path: dist/ComicCatcher-x86_64.AppImage
-      - name: Upload to Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/ComicCatcher-x86_64.AppImage
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+# Linux build is verified and currently disabled to save resources
+#  build-linux:
+#    runs-on: ubuntu-22.04
+#    steps:
+#      - uses: actions/checkout@v6
+#      - name: Set up Python
+#        uses: actions/setup-python@v6
+#        with:
+#          python-version: '3.12'
+#      - name: Install build tools
+#        run: |
+#          python -m pip install --upgrade pip
+#          pip install pyinstaller Pillow python-appimage .
+#      - name: Install system dependencies
+#        run: |
+#          sudo apt-get update
+#          sudo apt-get install -y libfuse2 curl
+#      - name: Build AppImage
+#        run: python packaging/build.py --linux
+#      - name: Upload Artifact
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: ComicCatcher-Linux
+#          path: dist/ComicCatcher-x86_64.AppImage
+#      - name: Upload to Release
+#        if: github.event_name == 'release'
+#        uses: softprops/action-gh-release@v2
+#        with:
+#          files: dist/ComicCatcher-x86_64.AppImage
+#        env:
+#          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   build-windows:
     runs-on: windows-latest
