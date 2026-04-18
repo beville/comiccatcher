@@ -80,13 +80,17 @@ def build_windows():
     clean_build()
     
     from PIL import Image
+    import PyQt6
+    pyqt_path = Path(PyQt6.__file__).parent / "Qt6" / "bin"
+    
     icon_ico = PACKAGING_DIR / "windows/comiccatcher.ico"
     img = Image.open(PROJECT_ROOT / "src/comiccatcher/resources/app_256.png")
     img.save(icon_ico, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
     
-    # Windows needs more aggressive collection for DLLs
+    # Use --paths to help PyInstaller find the DLLs
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed", "--onefile",
          "--name", APP_NAME, "--icon", str(icon_ico),
+         "--paths", str(pyqt_path),
          "--collect-all", "PyQt6",
          "--collect-submodules", "comiccatcher",
          "--add-data", f"src/comiccatcher/resources{os.pathsep}comiccatcher/resources",
