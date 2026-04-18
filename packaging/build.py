@@ -12,8 +12,11 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 DIST_DIR = PROJECT_ROOT / "dist"
 PACKAGING_DIR = PROJECT_ROOT / "packaging"
 
+def log(msg):
+    print(f"[*] {msg}")
+
 def run(cmd, cwd=PROJECT_ROOT, env=None):
-    print(f"🚀 Running: {' '.join(cmd)}")
+    log(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=cwd, env=env or os.environ, check=True)
     return result
 
@@ -33,7 +36,7 @@ def run_pyinstaller(icon_path):
          "src/comiccatcher/main.py"])
 
 def build_linux():
-    print("🐧 Building Linux AppImage (via PyInstaller)...")
+    log("Building Linux AppImage (via PyInstaller)...")
     clean_build()
     
     # 1. Run PyInstaller to get a standalone binary
@@ -53,9 +56,9 @@ def build_linux():
     shutil.copy(PACKAGING_DIR / "linux/comiccatcher.desktop", appdir / "comiccatcher.desktop")
     shutil.copy(icon_png, appdir / "comiccatcher.png")
     
-    # Custom AppRun that launches the binary from the lib folder
+    # Custom AppRun that launches our binary
     with open(appdir / "AppRun", "w") as f:
-        f.write(f'#!/bin/sh\nexec "$(dirname "$0")/usr/lib/{APP_NAME}/{APP_NAME}" "$@"\n')
+        f.write(f'#!/bin/sh\nexec "$(dirname "$0")/usr/bin/{APP_NAME}" "$@"\n')
     (appdir / "AppRun").chmod(0o755)
 
     # 3. Pack with appimagetool
@@ -70,10 +73,10 @@ def build_linux():
     run([str(appimagetool), "-n", str(appdir), str(DIST_DIR / f"{APP_NAME}-x86_64.AppImage")], env=env)
     
     shutil.rmtree(appdir)
-    print(f"✅ Linux build complete: {DIST_DIR}/{APP_NAME}-x86_64.AppImage")
+    log(f"Linux build complete: {DIST_DIR}/{APP_NAME}-x86_64.AppImage")
 
 def build_windows():
-    print("🪟 Building Windows EXE (via PyInstaller)...")
+    log("Building Windows EXE (via PyInstaller)...")
     clean_build()
     
     from PIL import Image
@@ -82,10 +85,10 @@ def build_windows():
     img.save(icon_ico, format='ICO', sizes=[(16,16), (32,32), (48,48), (64,64), (128,128), (256,256)])
     
     run_pyinstaller(icon_ico)
-    print(f"✅ Windows build complete: {DIST_DIR}/{APP_NAME}.exe")
+    log(f"Windows build complete: {DIST_DIR}/{APP_NAME}.exe")
 
 def build_macos():
-    print("🍎 Building macOS DMG (via PyInstaller)...")
+    log("Building macOS DMG (via PyInstaller)...")
     clean_build()
     # Placeholder for macOS logic
     pass
