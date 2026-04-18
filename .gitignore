@@ -215,3 +215,9 @@ packaging/*.AppImage
 packaging/metadata/
 dist/
 
+# Native packaging artifacts
+packaging/windows/*.ico
+packaging/macos/*.icns
+packaging/macos/*.iconset/
+build/
+

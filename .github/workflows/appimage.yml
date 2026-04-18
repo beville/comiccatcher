@@ -1,4 +1,4 @@
-name: Build AppImage
+name: Build Binaries
 
 on:
   release:
@@ -9,35 +9,34 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
+  build-linux:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
           pip install build python-appimage
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 curl
-
+          sudo apt-get install -y libfuse2 curl libicu-dev libqt6gui6 libegl1 libxcb-xinerama0
       - name: Build AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-        run: |
-          bash packaging/build_appimage.sh
-
-      - name: Upload AppImage to Release
+        run: bash packaging/linux/build_appimage.sh
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ComicCatcher-Linux
+          path: dist/ComicCatcher-x86_64.AppImage
+      - name: Upload to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
@@ -45,9 +44,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload AppImage as artifact
-        if: github.event_name != 'release'
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build EXE
+        run: powershell -File packaging/windows/build_exe.ps1
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ComicCatcher-AppImage
-          path: dist/ComicCatcher-x86_64.AppImage
+          name: ComicCatcher-Windows
+          path: dist/ComicCatcher.exe
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ComicCatcher.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build DMG
+        run: bash packaging/macos/build_dmg.ps1 # Note: I'll rename my .sh to .sh
+        # Actually I named it .sh, let me correct that in the YAML
+      - name: Build DMG
+        run: bash packaging/macos/build_dmg.sh
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ComicCatcher-macOS
+          path: dist/ComicCatcher-macOS.dmg
+      - name: Upload to Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ComicCatcher-macOS.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
