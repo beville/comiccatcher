@@ -80,16 +80,6 @@ def build_windows():
     clean_build()
     
     from PIL import Image
-    import PyQt6
-    
-    # Meticulous DLL discovery: Find the Qt6 bin directory
-    pyqt_dir = Path(PyQt6.__file__).parent
-    qt_bin_dir = pyqt_dir / "Qt6" / "bin"
-    log(f"Found PyQt6 bin directory: {qt_bin_dir}")
-    
-    # We explicitly add the bin directory to binaries to ensure ICU and other DLLs are included
-    # Syntax for --add-binary is "SOURCE;DEST"
-    dll_bundle = f"{qt_bin_dir}{os.pathsep}PyQt6/Qt6/bin"
     
     icon_ico = PACKAGING_DIR / "windows/comiccatcher.ico"
     img = Image.open(PROJECT_ROOT / "src/comiccatcher/resources/app_256.png")
@@ -97,8 +87,6 @@ def build_windows():
     
     run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed", "--onefile",
          "--name", APP_NAME, "--icon", str(icon_ico),
-         "--add-binary", dll_bundle,
-         "--collect-all", "PyQt6",
          "--collect-submodules", "comiccatcher",
          "--add-data", f"src/comiccatcher/resources{os.pathsep}comiccatcher/resources",
          "src/comiccatcher/main.py"])
@@ -107,8 +95,27 @@ def build_windows():
 def build_macos():
     log("Building macOS DMG (via PyInstaller)...")
     clean_build()
-    # Placeholder for macOS logic
-    pass
+    
+    icon_icns = PROJECT_ROOT / "src/comiccatcher/resources/app_256.icns"
+    if not icon_icns.exists():
+        log("No .icns found, falling back to default or png if possible, though PyInstaller recommends .icns")
+        icon_arg = str(PROJECT_ROOT / "src/comiccatcher/resources/app_256.png")
+    else:
+        icon_arg = str(icon_icns)
+
+    run([sys.executable, "-m", "PyInstaller", "--noconfirm", "--windowed",
+         "--name", APP_NAME, "--icon", icon_arg,
+         "--collect-submodules", "comiccatcher",
+         "--add-data", f"src/comiccatcher/resources{os.pathsep}comiccatcher/resources",
+         "src/comiccatcher/main.py"])
+    
+    # Pack into dmg using hdiutil
+    app_path = DIST_DIR / f"{APP_NAME}.app"
+    dmg_path = DIST_DIR / f"{APP_NAME}-macOS.dmg"
+    log(f"Creating DMG at {dmg_path}...")
+    run(["hdiutil", "create", "-volname", APP_NAME, "-srcfolder", str(app_path), "-ov", "-format", "UDZO", str(dmg_path)])
+    
+    log(f"macOS build complete: {dmg_path}")
 
 if __name__ == "__main__":
     OS = platform.system().lower()
